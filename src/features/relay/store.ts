@@ -2054,24 +2054,16 @@ export function createChannelStore(
       cursor = { until: last.created_at, before_id: last.id };
     }
   }
-  async function searchPublic(
-    query: string,
-    settings?: ReadOptions & {
-      limit?: number;
-      exact?: boolean;
-      progress?: ((found: PublicChannelSearch) => void) | undefined;
-    },
-    recover = true,
-  ): Promise<PublicChannelSearch> {
+  /** The shared directory read, started or reused under
+   * PUBLIC_CHANNEL_PAGE_TTL, for `searchPublic` and `defaultChannels`. */
+  function publicDirectoryEntry() {
     if (disposed || !transport || !discovery || options.cachedOnly)
       throw new Error("Relay is unavailable");
-    const needle = query.trim().toLowerCase().replace(/^#/, "");
-    if (!needle) return { channels: [], partial: false };
     if (list.status !== "ready")
       throw new Error("Channel list is not ready for channel search");
     const generation = epoch;
-    // Candidates only: `resolve` below re-reads each match, so a reused page
-    // never grants access by itself.
+    // Candidates only: `resolve` or a join re-reads each match, so a reused
+    // page never grants access by itself.
     if (
       publicDirectory?.generation !== generation ||
       (publicDirectory.at !== undefined &&
@@ -2165,7 +2157,23 @@ export function createChannelStore(
         },
       );
     }
-    const entry = publicDirectory;
+    return publicDirectory;
+  }
+  async function searchPublic(
+    query: string,
+    settings?: ReadOptions & {
+      limit?: number;
+      exact?: boolean;
+      progress?: ((found: PublicChannelSearch) => void) | undefined;
+    },
+    recover = true,
+  ): Promise<PublicChannelSearch> {
+    if (disposed || !transport || !discovery || options.cachedOnly)
+      throw new Error("Relay is unavailable");
+    const needle = query.trim().toLowerCase().replace(/^#/, "");
+    if (!needle) return { channels: [], partial: false };
+    const generation = epoch;
+    const entry = publicDirectoryEntry();
     const signal = settings?.signal;
     const limit = settings?.limit ?? 8;
     const resolved = new Set<string>();
@@ -2351,6 +2359,40 @@ export function createChannelStore(
     } finally {
       publicSearchReserve -= PUBLIC_CHANNEL_RESERVE_BYTES;
     }
+  }
+  /** The post-join fallback's candidates: flagged, active, public, not joined;
+   * in the list's own order (name, then id). */
+  async function defaultChannels(
+    settings?: ReadOptions,
+  ): Promise<readonly string[]> {
+    const generation = epoch;
+    const entry = publicDirectoryEntry();
+    const signal = settings?.signal;
+    signal?.throwIfAborted();
+    await new Promise<unknown>((resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+      entry.read.then(resolve, reject);
+    });
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel search", "AbortError");
+    const latest = new Map<string, RelayEvent>();
+    for (const event of entry.events) {
+      const id = tag(event, "d");
+      if (id) latest.set(id, newer(latest.get(id), event));
+    }
+    return [...latest.entries()]
+      .filter(
+        ([id, event]) =>
+          openMetadata(event) &&
+          !hasTag(event, "archived", "true") &&
+          event.tags.some(([key]) => key === "auto_join") &&
+          !discovery?.authorized(id),
+      )
+      .map(([id, event]) => ({ id, name: metadataName(event) ?? "" }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .map(({ id }) => id);
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
    * The page only names candidates; `resolve` re-reads each one before it
@@ -2854,6 +2896,7 @@ export function createChannelStore(
     },
     resolve,
     searchPublic,
+    defaultChannels,
     findLabeled,
     matchPublic,
     openDirectory: () =>
