@@ -2367,14 +2367,12 @@ export function createChannelStore(
     const entry = publicDirectoryEntry();
     const signal = settings?.signal;
     signal?.throwIfAborted();
-    const { partial } = await new Promise<{ partial: boolean }>(
-      (resolve, reject) => {
-        signal?.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        });
-        entry.read.then(resolve, reject);
-      },
-    );
+    await new Promise<unknown>((resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason), {
+        once: true,
+      });
+      entry.read.then(resolve, reject);
+    });
     if (disposed || generation !== epoch)
       throw new DOMException("Stale channel search", "AbortError");
     const latest = new Map<string, RelayEvent>();
@@ -2382,7 +2380,7 @@ export function createChannelStore(
       const id = tag(event, "d");
       if (id) latest.set(id, newer(latest.get(id), event));
     }
-    const ids = [...latest.entries()]
+    return [...latest.entries()]
       .filter(
         ([id, event]) =>
           openMetadata(event) &&
@@ -2393,7 +2391,6 @@ export function createChannelStore(
       .map(([id, event]) => ({ id, name: metadataName(event) ?? "" }))
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .map(({ id }) => id);
-    return { ids, partial };
   }
   /** NIP-CL lookup: the channels `creator` made with `label`, oldest first.
    * The page only names candidates; `resolve` re-reads each one before it
