@@ -110,7 +110,6 @@ import type {
 } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
-import { useDefaultChannels } from "../../features/channels/default-channels";
 import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { channelHasUnread } from "./useSidebarFilters";
@@ -402,7 +401,6 @@ function ChannelWorkspace({
   useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
   }, [queries, list.status]);
-  useDefaultChannels(queries, scope, cached);
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
