@@ -164,6 +164,21 @@ export function createInboxFeed({
       signal,
     );
   }
+  /** Channels discovery may read: verified, current, unarchived membership. */
+  const discoveryChannels = () =>
+    channels
+      .list()
+      .channels.filter(
+        (channel) =>
+          !channel.huddle &&
+          !channel.cached &&
+          !channel.archived &&
+          !channel.metadataPending &&
+          channel.members?.includes(viewer),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
+  /** Restored channels the latest discovery skipped until verified. */
+  let unverified: ReadonlySet<string> | undefined;
   async function refresh() {
     if (closed) return;
     if (work) return work;
@@ -207,34 +222,22 @@ export function createInboxFeed({
         await settle(targets, owned.signal);
         if (closed || generation !== epoch) return;
         publish({ incomplete: [] });
-        if (threadHistory)
+        if (threadHistory) {
+          const eligible = discoveryChannels();
+          unverified = new Set(
+            channels
+              .list()
+              .channels.filter(
+                (channel) => channel.cached || channel.metadataPending,
+              )
+              .map((channel) => channel.id),
+          );
           await discoverInboxThreads({
             viewer,
-            channelIds: channels
-              .list()
-              .channels.filter(
-                (channel) =>
-                  !channel.huddle &&
-                  !channel.cached &&
-                  !channel.archived &&
-                  !channel.metadataPending &&
-                  channel.members?.includes(viewer),
-              )
-              .map((channel) => channel.id)
-              .sort(),
-            soloChannelIds: channels
-              .list()
-              .channels.filter(
-                (channel) =>
-                  channel.channelType === "solo" &&
-                  !channel.huddle &&
-                  !channel.cached &&
-                  !channel.archived &&
-                  !channel.metadataPending &&
-                  channel.members?.includes(viewer),
-              )
-              .map((channel) => channel.id)
-              .sort(),
+            channelIds: eligible.map((channel) => channel.id),
+            soloChannelIds: eligible
+              .filter((channel) => channel.channelType === "solo")
+              .map((channel) => channel.id),
             choices: threadHistory.choices(),
             since: Math.floor(Date.now() / 1000) - INBOX_THREAD_WINDOW_SECONDS,
             read: threadHistory.read,
@@ -264,6 +267,7 @@ export function createInboxFeed({
               return threadHistory.incomingIds(flatOnly);
             },
           });
+        }
         if (closed || generation !== epoch) return;
         publish({
           status: "ready",
@@ -295,9 +299,38 @@ export function createInboxFeed({
     controller?.abort();
     controller = undefined;
     work = undefined;
+    unverified = undefined;
     // Previously demanded data recovers explicitly or through reconnect.
     publish({ status: "idle", incomplete, error: undefined });
   }
+  function stale() {
+    epoch++;
+    controller?.abort();
+    controller = undefined;
+    work = undefined;
+    unverified = undefined;
+    publish({
+      status: "idle",
+      incomplete: retainedIncomplete(),
+      error: undefined,
+    });
+  }
+  function reconnect() {
+    if (requested) void refresh();
+  }
+  // A restored channel joins discovery once verified. Demanded discovery that
+  // skipped it renews, as a follow change does. A newly joined channel does
+  // not: its pre-membership history needs fresh shared admission instead.
+  const stopChannels = threadHistory
+    ? channels.subscribeList(() => {
+        const skipped = unverified;
+        if (closed || !skipped?.size) return;
+        if (discoveryChannels().some((channel) => skipped.has(channel.id))) {
+          stale();
+          reconnect();
+        }
+      })
+    : undefined;
   const retainedIncomplete = () =>
     Object.freeze(snapshot.incomplete.filter((id) => retainedEvent(id)));
   return Object.freeze({
@@ -311,24 +344,13 @@ export function createInboxFeed({
     ensure: () =>
       work ?? (snapshot.status === "idle" ? refresh() : Promise.resolve()),
     refresh,
-    stale() {
-      epoch++;
-      controller?.abort();
-      controller = undefined;
-      work = undefined;
-      publish({
-        status: "idle",
-        incomplete: retainedIncomplete(),
-        error: undefined,
-      });
-    },
-    reconnect() {
-      if (requested) void refresh();
-    },
+    stale,
+    reconnect,
     clear: () => clear(),
     purge: () => clear(retainedIncomplete()),
     dispose() {
       closed = true;
+      stopChannels?.();
       epoch++;
       controller?.abort();
       controller = undefined;

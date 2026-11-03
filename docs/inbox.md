@@ -163,8 +163,11 @@ page as exhausted history. Explicit Retry can settle it once existing shared
 readers have admitted the missing reference; Inbox adds no reference-resolution loop.
 Thread discovery separately pages viewer-authored posts/replies and explicit
 follow choices in current, unarchived channels, then batches up to 100
-candidate roots across channels for targeted reply reads. Every discovery read,
-Solo included, stays within the last 30 days. Seeds stay outside unread retention until a thread has incoming
+candidate roots across channels for targeted reply reads. Every discovery walk,
+Solo included, stays within the last 30 days; the exact root read for an
+in-window reply does not, so an older root still groups its thread. Restored
+channels still awaiting verification are skipped, and demanded discovery
+renews once one is verified; joining a channel does not renew it. Seeds stay outside unread retention until a thread has incoming
 activity. The existing unread projection decides relevance and survival after
 edit/delete closure; a root leaves the pending query only once incoming evidence
 survives that fold. Self-only or deleted pages continue with the composite

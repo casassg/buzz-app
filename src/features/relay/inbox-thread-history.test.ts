@@ -252,8 +252,32 @@ it("reads replies for many channels together and stays in the window", async () 
   expect(
     f.admit.mock.calls.flatMap(([events]) => events).map((event) => event.id),
   ).toEqual(expect.arrayContaining([root.id, reply.id]));
-  expect(f.read.mock.calls.every(([filter]) => filter.since === 100)).toBe(
-    true,
-  );
+  // Every walk stays in the window; only exact root reads do not.
+  expect(
+    f.read.mock.calls.every(
+      ([filter]) => (filter.since === 100) === !filter.ids,
+    ),
+  ).toBe(true);
   expect(f.read.mock.calls.length).toBeLessThan(40);
+});
+
+it("reads an out-of-window root for an in-window reply", async () => {
+  const viewer = keypair(),
+    other = keypair();
+  const root = message(other, "room", "old root", 40);
+  const tags = [["e", root.id, "", "reply"]];
+  const mine = message(viewer, "room", "recent participation", 150, tags);
+  const reply = message(other, "room", "reply today", 200, tags);
+  const f = fixture([root, mine, reply]);
+  await discoverInboxThreads({
+    ...f,
+    viewer: viewer.pubkey,
+    channelIds: ["room"],
+    choices: new Map(),
+    since: 100,
+    signal: new AbortController().signal,
+  });
+  expect(
+    f.admit.mock.calls.flatMap(([events]) => events).map((event) => event.id),
+  ).toEqual(expect.arrayContaining([root.id, reply.id]));
 });

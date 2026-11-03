@@ -1715,6 +1715,61 @@ it("discovers participation in someone else's thread without a mention", async (
   expect(rows(h).map((row) => row.messageId)).toContain(reply.id);
 });
 
+it("renews demanded discovery when a restored channel is verified", async () => {
+  const viewer = keypair().pubkey;
+  const listeners = new Set<() => void>();
+  let cached = true;
+  const room = () => ({
+    id: "room",
+    name: "Room",
+    members: [viewer],
+    ...(cached ? { cached: true } : {}),
+  });
+  const channels = {
+    list: () => ({ channels: [room()] }),
+    subscribeList(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as Parameters<typeof createInboxFeed>[0]["channels"];
+  const discovered: (readonly string[] | undefined)[] = [];
+  const feed = createInboxFeed({
+    viewer,
+    channels,
+    reader: { read: async () => [] },
+    addressedRead: async () => [],
+    retainedEvent: () => undefined,
+    retainedEditIds: () => [],
+    threadHistory: {
+      choices: () => new Map(),
+      incomingIds: () => [],
+      read: async (filter) => {
+        if (filter.authors) discovered.push(filter["#h"]);
+        return [];
+      },
+      admit: (events) => events,
+    },
+  });
+  try {
+    // The roster is still held: discovery completes without the room.
+    await feed.ensure();
+    expect(feed.snapshot().status).toBe("ready");
+    expect(discovered).toEqual([]);
+    // Releasing it verifies the room; no caller needs to refresh.
+    cached = false;
+    for (const listener of listeners) listener();
+    await vi.waitFor(() => expect(discovered).toEqual([["room"]]));
+    await vi.waitFor(() => expect(feed.snapshot().status).toBe("ready"));
+    // A later list change with nothing newly verified does not walk again.
+    for (const listener of listeners) listener();
+    await feed.ensure();
+    expect(discovered).toEqual([["room"]]);
+  } finally {
+    feed.dispose();
+  }
+  expect(listeners.size).toBe(0);
+});
+
 it("discovers an explicit follow added after the feed settled", async () => {
   threadWindowNow();
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });

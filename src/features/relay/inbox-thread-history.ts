@@ -68,7 +68,9 @@ async function walk({
   const page = async (filter: ReadFilter, cursor?: Cursor) => {
     signal.throwIfAborted();
     if (++requests > 256) throw limited();
-    const window = since === undefined ? {} : { since };
+    // The window bounds discovery walks; an exact root read is not a walk, and
+    // an old root with an in-window reply must still arrive.
+    const window = since === undefined || filter.ids ? {} : { since };
     const rows = [
       ...(await read({ ...filter, ...window, ...cursor }, signal)),
     ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
