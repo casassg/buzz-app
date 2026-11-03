@@ -75,6 +75,7 @@ import {
 import {
   archiveKey,
   archiveIndex,
+  hasUnread,
   isArchived,
   readArchives,
   reopenArchives,
@@ -146,7 +147,6 @@ const matchesActivity = (
       return item.thread;
   }
 };
-const hasUnread = (item: InboxItem) => item.unreadCount > 0 || item.manual;
 const targetOf = (item: InboxItem) => ({
   channelId: item.channelId,
   messageId: item.messageId,
@@ -483,7 +483,9 @@ function InboxList({
           activity,
           list.channels.some(
             (channel) =>
-              channel.id === item.channelId && channel.channelType === "dm",
+              channel.id === item.channelId &&
+              (channel.channelType === "dm" ||
+                (channel.channelType === "solo" && !item.thread)),
           ),
         ),
     )

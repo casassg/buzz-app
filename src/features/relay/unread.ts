@@ -1016,7 +1016,11 @@ export function createUnread({
         const session = channel.channelType === "solo";
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
-          return entry.event.pubkey !== viewer && !!category(entry, dm);
+          return (
+            entry.event.pubkey !== viewer &&
+            (!!category(entry, dm) ||
+              (session && !entry.parentId && !entry.quiet))
+          );
         });
         // A session's top-level timeline is one conversation; its threads,
         // roots included, stay separate.
@@ -2549,6 +2553,7 @@ export function createUnread({
   });
   return {
     capability,
+    threadChoices: choices,
     // Private session evidence lookup; never seeds timeline windows or grants access.
     // Reference-only auxiliaries inherit every owning channel through the same
     // bounded, fail-closed ancestry used for retention.

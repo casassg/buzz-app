@@ -1201,7 +1201,28 @@ export function createRelaySession(
     notify,
     follows: browserThreadFollows(readScope),
   });
+  /** The follow choices thread history last read; storage is read on first use. */
+  let inboxChoices: ReturnType<typeof unread.threadChoices> | undefined;
   const inboxFeed = createInboxFeed({
+    threadHistory: {
+      choices: () => (inboxChoices = unread.threadChoices()),
+      incomingIds: (flatOnly) =>
+        unread.capability
+          .inbox()
+          .items.filter(
+            (item) =>
+              !flatOnly || item.id === `${item.channelId}:${item.channelId}`,
+          )
+          .flatMap((item) => item.messageIds),
+      read: (filter, signal) =>
+        finiteRead([filter], { signal }, (signal) =>
+          relayRead([filter], { signal }),
+        ),
+      admit: (events, signal, prepare) => {
+        signal.throwIfAborted();
+        return accept(events, true, prepare, signal);
+      },
+    },
     // A withheld auxiliary event is not proof of an exhausted history page.
     // Fail closed at raw/admitted admission; do not relax reference visibility.
     reader: {
@@ -1236,6 +1257,15 @@ export function createRelaySession(
     channels: channels.queries,
     viewer: transport?.viewer ?? "",
     notify,
+  });
+  const stopInboxChoices = unread.capability.subscribeSync(() => {
+    // Until thread history first reads the choices, there is nothing to renew.
+    if (inboxChoices === undefined) return;
+    const next = unread.threadChoices();
+    if (next === inboxChoices) return;
+    inboxChoices = next;
+    inboxFeed.stale();
+    inboxFeed.reconnect();
   });
   let traffic: LiveSubscription | undefined;
   const artifactSyncs = new Set<ArtifactSyncOwner>();
@@ -3683,6 +3713,7 @@ export function createRelaySession(
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
+      stopInboxChoices();
       unread.dispose();
       inboxFeed.dispose();
       writes?.dispose();

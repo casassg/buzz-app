@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { inboxName } from "./navigation.mjs";
 import { open, settle, virtuaIdle } from "./timeline.mjs";
 import {
   holdReadingFocus,
@@ -30,7 +31,7 @@ test("Inbox DM composer focus reads a visible peer arrival after dwell without r
       }),
     )
     .toEqual({ status: "reconciled", completeness: "snapshot" });
-  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: inboxName }).click();
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   const dm = inbox
     .getByRole("list", { name: "Inbox conversations" })

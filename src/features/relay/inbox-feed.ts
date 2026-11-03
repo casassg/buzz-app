@@ -1,3 +1,5 @@
+import { discoverInboxThreads } from "./inbox-thread-history";
+import type { ThreadFollows } from "./thread-follows";
 import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
@@ -27,8 +29,22 @@ export function createInboxFeed({
   addressedRead,
   retainedEvent,
   retainedEditIds,
+  threadHistory,
   notify = (listener) => listener(),
 }: {
+  threadHistory?: {
+    choices(): ThreadFollows;
+    incomingIds(flatOnly?: boolean): readonly string[];
+    read(
+      filter: ReadFilter,
+      signal: AbortSignal,
+    ): Promise<readonly RelayEvent[]>;
+    admit(
+      events: readonly RelayEvent[],
+      signal: AbortSignal,
+      prepare: (events: readonly RelayEvent[]) => void,
+    ): readonly RelayEvent[];
+  };
   viewer: string;
   channels: ChannelQueries;
   reader: RelayReader;
@@ -56,8 +72,6 @@ export function createInboxFeed({
   // Metadata can hide a row without revoking access. Settle its overlays before
   // later ordinary metadata can reveal the retained mention.
   const admitted = (event: RelayEvent) => {
-    if (!event.tags.some(([name, value]) => name === "p" && value === viewer))
-      return false;
     const hs = event.tags.filter(([name]) => name === "h");
     return (
       hs.length === 0 ||
@@ -73,10 +87,16 @@ export function createInboxFeed({
           ))
     );
   };
-  function project(events: readonly RelayEvent[]) {
+  function project(events: readonly RelayEvent[], addressedOnly = false) {
     return Object.freeze(
       events.filter(
-        (event) => mentionKinds.includes(event.kind) && admitted(event),
+        (event) =>
+          mentionKinds.includes(event.kind) &&
+          admitted(event) &&
+          (!addressedOnly ||
+            event.tags.some(
+              ([name, value]) => name === "p" && value === viewer,
+            )),
       ),
     );
   }
@@ -146,7 +166,7 @@ export function createInboxFeed({
           owned.signal,
           (events) => {
             if (closed || generation !== epoch || owned.signal.aborted) return;
-            const ids = project(events).map((event) => event.id);
+            const ids = project(events, true).map((event) => event.id);
             if (ids.length)
               publish({
                 incomplete: Object.freeze([
@@ -161,7 +181,7 @@ export function createInboxFeed({
         const targets = [
           ...new Set([
             ...snapshot.incomplete,
-            ...project(mentions).map((event) => event.id),
+            ...project(mentions, true).map((event) => event.id),
           ]),
         ];
         const updates = await overlays(targets, [40003, 5, 9005], owned.signal);
@@ -176,6 +196,74 @@ export function createInboxFeed({
           [5, 9005],
           owned.signal,
         );
+        if (closed || generation !== epoch) return;
+        publish({ incomplete: [] });
+        if (threadHistory)
+          await discoverInboxThreads({
+            viewer,
+            channelIds: channels
+              .list()
+              .channels.filter(
+                (channel) =>
+                  !channel.huddle &&
+                  !channel.cached &&
+                  channel.members?.includes(viewer),
+              )
+              .map((channel) => channel.id)
+              .sort(),
+            soloChannelIds: channels
+              .list()
+              .channels.filter(
+                (channel) =>
+                  channel.channelType === "solo" &&
+                  !channel.huddle &&
+                  !channel.cached &&
+                  !channel.archived &&
+                  !channel.metadataPending &&
+                  channel.members?.includes(viewer),
+              )
+              .map((channel) => channel.id)
+              .sort(),
+            choices: threadHistory.choices(),
+            read: threadHistory.read,
+            signal: owned.signal,
+            admit: async (events, signal, flatOnly) => {
+              const admitted = threadHistory.admit(
+                events,
+                signal,
+                (visible) => {
+                  const ids = project(visible).map((event) => event.id);
+                  publish({
+                    incomplete: Object.freeze([
+                      ...new Set([...snapshot.incomplete, ...ids]),
+                    ]),
+                  });
+                },
+              );
+              const ids = project(admitted).map((event) => event.id);
+              const updates = await overlays(ids, [40003, 5, 9005], signal);
+              await overlays(
+                [
+                  ...new Set([
+                    ...retainedEditIds(ids),
+                    ...updates
+                      .filter((event) => event.kind === 40003)
+                      .map((event) => event.id),
+                  ]),
+                ],
+                [5, 9005],
+                signal,
+              );
+              if (closed || generation !== epoch || signal.aborted) return [];
+              const settled = new Set(ids);
+              publish({
+                incomplete: Object.freeze(
+                  snapshot.incomplete.filter((id) => !settled.has(id)),
+                ),
+              });
+              return threadHistory.incomingIds(flatOnly);
+            },
+          });
         if (closed || generation !== epoch) return;
         publish({
           status: "ready",

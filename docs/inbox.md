@@ -7,7 +7,7 @@ PRs are one user-approved Inbox launch batch; none should ship independently.
 ## Evidence slice (stacked with Inbox UI)
 
 PR3 added no Inbox UI. This page uses `session.unread.inbox()` as its single
-conversation projection and `session.inboxFeed` as bounded addressed history
+conversation projection and `session.inboxFeed` as bounded addressed and participating-thread history
 demand. These changes are one launch batch, not a separately shippable
 backend feature. Ordinary channel and thread readers, read-state storage and
 outbox retain their existing ownership. No projects, approvals or reminders.
@@ -16,11 +16,11 @@ outbox retain their existing ownership. No projects, approvals or reminders.
 
 ### Archive conversations
 
-Archive in the row button or row context menu removes that conversation from the active Inbox. The Archive shortcut (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in Settings → Shortcuts) archives the last opened conversation, or restores it in the archived view, including from the composer. The filter menu groups Type, From, and Status, followed by Drafts. Status switches between Inbox and Archived using the same single-choice highlight as Type; activity and sender selections stay in effect in either view. The existing Unread only toggle stays independent. Status, activity, sender and attention choices are saved on this device for the current account and community, with each missing or invalid choice using its own default. Older saved combined status falls back to Inbox. The toolbar wraps on narrow screens. Choosing Archived opens the archived view, where Restore returns a conversation to Inbox. Archive/Restore row buttons appear on hover or keyboard focus and remain visible without a hover pointer; row actions do not open or mark an unselected conversation read. Archiving the open conversation, from its row, context menu or the shortcut, closes its tab and opens the next visible conversation (or the preceding one at the end), marking it read as a normal selection would; with none remaining, focus returns to the list. Archiving any other row moves focus to the next visible row. Incoming replies and mentions preserve an open archived conversation and its composer draft. When a Type, From or Unread only choice leaves the list empty, Clear filters resets those three and keeps Status; an empty Archived view without them offers Show Inbox. Either returns focus to the filters. Archive records a timestamp watermark, the later of the archive time and the conversation's newest evidence, and the message IDs already observed. A fresh incoming participating-thread reply or DM message at or beyond that watermark returns the conversation to its ordinary activity views (Threads or DMs, and All activity); Mentions still requires a fresh explicit mention. DM arrivals reopen the conversation whether they are replies or top-level messages. Already observed replies and replayed older mentions do not reopen it. An archive saved for part of a session's merged top-level row hides that row only when archives cover all of its messages. Reply reopening persists without discarding the mention cutoff, so bounded evidence eviction cannot hide the reopened conversation or resurface its older mentions. A fresh explicit mention retires the saved cutoff; manual Restore clears it in every activity view. Sending a reply does not archive or restore a conversation; Inbox reuses the unchanged shared composer. Archive/filter/selection policy lives entirely in the Inbox plugin. The shared unread evidence owner supplies verified conversation-member facts (`id`, `createdAt`, `mentioned`) through the existing injected `session.unread.inbox()` capability, available to any plugin requesting `relay`. The Inbox plugin uses those facts to retire superseded archive intent; the shared contract contains no Archive state or cutoff policy.
+Archive in the row button or row context menu removes that conversation from the active Inbox. The Archive shortcut (⌃⌘A on Apple platforms, Ctrl+Shift+E elsewhere; rebindable in Settings → Shortcuts) archives the last opened conversation, or restores it in the archived view, including from the composer. The filter menu groups Type, From, and Status, followed by Drafts. Status switches between Inbox and Archived using the same single-choice highlight as Type; activity and sender selections stay in effect in either view. The existing Unread only toggle stays independent. Status, activity, sender and attention choices are saved on this device for the current account and community, with each missing or invalid choice using its own default. Older saved combined status falls back to Inbox. The toolbar wraps on narrow screens. Choosing Archived opens the archived view, where Restore returns a conversation to Inbox. Archive/Restore row buttons appear on hover or keyboard focus and remain visible without a hover pointer; row actions do not open or mark an unselected conversation read. Archiving the open conversation, from its row, context menu or the shortcut, closes its tab and opens the next visible conversation (or the preceding one at the end), marking it read as a normal selection would; with none remaining, focus returns to the list. Archiving any other row moves focus to the next visible row. Incoming replies and mentions preserve an open archived conversation and its composer draft. When a Type, From or Unread only choice leaves the list empty, Clear filters resets those three and keeps Status; an empty Archived view without them offers Show Inbox. Either returns focus to the filters. Archive records a timestamp watermark, the later of the archive time and the conversation's newest evidence, and the message IDs already observed. A fresh incoming participating-thread reply, Solo top-level response or DM message at or beyond that watermark returns the conversation to its ordinary activity views (Threads or DMs, and All activity); Mentions still requires a fresh explicit mention. DM arrivals reopen the conversation whether they are replies or top-level messages. Already observed replies and replayed older mentions do not reopen it. An archive saved for part of a session's merged top-level row hides that row only when archives cover all of its messages. Reply reopening persists without discarding the mention cutoff, so bounded evidence eviction cannot hide the reopened conversation or resurface its older mentions. A fresh explicit mention retires the saved cutoff; manual Restore clears it in every activity view. Sending a reply does not archive or restore a conversation; Inbox reuses the unchanged shared composer. Archive/filter/selection policy lives entirely in the Inbox plugin. The shared unread evidence owner supplies verified conversation-member facts (`id`, `createdAt`, `mentioned`) through the existing injected `session.unread.inbox()` capability, available to any plugin requesting `relay`. The Inbox plugin uses those facts to retire superseded archive intent; the shared contract contains no Archive state or cutoff policy.
 
 Archive applies only to conversations admitted by the shared Inbox projection; it does not override channel visibility policy or change channel archive state. Archive is personal view intent saved on this device, partitioned by the relay session's community and viewer scope. It persists across reloads and reconnects, with the same-window subscription and cross-window storage notifications as other view intent. Failed saves leave the conversation visible and expose Retry. Archive choices do not synchronize across devices or change unread or notification policy. It does not delete messages or claim a task has finished. The archived view uses the same bounded verified conversation evidence as Inbox, so it is not a permanent full-history archive browser.
 
-Inbox now renders chat-only DMs, mentions and participating threads through
+Inbox now renders chat-only DMs, Solo conversations, mentions and participating threads through
 `session.unread.inbox()`, with independent Activity type and Sender filters and
 an independent Unread only toggle. Sender classification uses `session.agentChoices` and
 cached/profile-backed identity evidence, never a new inventory or name heuristic.
@@ -29,9 +29,27 @@ Rows retain exact IDs and current names while `inboxFeed.incomplete` marks only 
 
 The list is the Inbox page's first tab, in the host tab workspace behind `conversation.ui.Tabs`. Opening a row shows its conversation beside the list in the side tab pane, with the same reader and composer as Channels tabs: a thread at its exact message, revealed even outside the newest bounded page, or a whole DM or session conversation where its Channels tab would open. A plain open replaces the tab the previous one added, so one tab follows the selection; a tab moved to the main pane stays. The tab's right-click menu offers Open in channel, which opens its conversation in Channels; a thread opens there at the same message. A thread also names its conversation above its original message, as the rows do (`#channel` or `DM · names`); that name is a link that does the same. The pane resizes, closes and handles Escape as Channels' does. A late verified root can regroup a conversation without changing its open tab. Inbox tabs do not enter a channel visit, so showing one preserves forced-unread intent. Reading is saved by the shared unread owner, through the reader's dwell and the row's explicit read. Failed read actions retain their captured Retry unless access, the session or a newer intent retires it. A DM Retry reuses the original channel cutoff and manual-clear keys, not the retry-time clock or later arrivals. Re-clicking the selected row reselects its tab without repeating its read. Closing the tab ends the selection, so reopening the row reads it again. Archiving the selected conversation's channel, or its room becoming a Huddle, closes its tab and returns focus it held to the filters, and restoring the channel does not reopen it; other retained tabs follow Channels' unavailable placeholder, and focus their reader held moves to the tab. Re-clicking the selected row reveals its current message in its tab; a session mention that regrouped into a thread reselects its timeline tab. Context menus allow device-local Mark unread. Row accessible descriptions reuse the visible safe preview or incomplete placeholder; Show more follows the filtered result count. `NavigationItem` owns selected styling and `aria-current`. No Inbox-owned session, parallel fold, composer or outbox.
 
+Solo chats include ordinary incoming top-level messages, excluding agent-only coordination and system events. Their flat rows appear under All and DMs; nested threads stay separate. Reading in Channels or Inbox clears the same evidence. Finite discovery fetches surviving incoming Solo activity independently of the aggregate channel sample, paging past self, quiet and deleted messages.
+
 ### Open Inbox with a filter
 
 Four shortcuts open the Inbox page with its filters applied, including from the composer, like Slack's: ⌘⇧A (Ctrl+Shift+A elsewhere) opens All activity with Unread only, and ⌘⇧T, ⌘⇧M and ⌘⇧K open Threads, Mentions and DMs. Each also shows Inbox rather than Archived and leaves Drafts. Threads, Mentions and DMs keep the saved Unread only choice; Sender is never changed. They are rebindable in Settings → Shortcuts. The shortcut opens `buzz.inbox/inbox` with a versioned route (`{ attention?: "unread", activity? }`) that the page validates, and a plain open from the sidebar or topbar carries none and leaves saved filters alone. The page applies a route once per presentation of the visit, but not when Back/Forward returns to it, which keeps the filters as they were left, using the same saved choices as the filter menu, so pressing a shortcut again after changing the filters by hand applies it again, even though the host treats an identical address as the same history entry.
+
+## Navigation badge
+
+The Inbox navigation entry shows, in the sidebar's subtle count chip, how many
+conversations in the default Inbox view are unread: every activity type and
+sender, excluding archived ones. It counts conversations, not messages, showing
+99+ above 99. It
+reads the same `session.unread.inbox()` projection and device-local archive
+state as the page. Once the channel roster is ready it ensures only the shared
+unread evidence the sidebar already loads, so DMs, recent mentions and recent
+or live thread replies count before Inbox is first opened. The addressed feed
+and older-thread history are read when Inbox opens, not at launch; their
+conversations then join the count. Its unread count is part of the entry's
+accessible name. It ignores the page's saved filters. Because the badge keeps the projection subscribed for the whole
+session, `inbox()` folds each channel's own rows (plus shared overlays) rather
+than every retained event per channel.
 
 ## Drafts (PR5)
 
@@ -133,8 +151,8 @@ unread evidence can be provisionally admitted between queries, but exact target
 IDs are marked incomplete **before** unread subscribers are notified. The
 consumer must not show their body as current while incomplete; failures retain
 that metadata and offer retry. This is a completeness signal, not atomic content
-admission or a second message fold. A target outside the latest 50 addressed
-rows is not discovered; if a failed target falls outside a later page its
+admission or a second message fold. A mention outside the latest 50 addressed
+rows is not discovered by that query; if a failed target falls outside a later page its
 bounded auxiliary check still runs before its incomplete flag is cleared.
 Incomplete obligations survive disconnect and unrelated access revocation while
 the corresponding readable unread evidence survives; full cache/session retirement
@@ -143,6 +161,20 @@ query omits their soft-deleted rows. If reference visibility withholds an auxili
 event, the finite attempt stays failed/incomplete rather than treating the filtered
 page as exhausted history. Explicit Retry can settle it once existing shared
 readers have admitted the missing reference; Inbox adds no reference-resolution loop.
+Thread discovery separately pages viewer-authored posts/replies and explicit
+follow choices, then batches up to 100 candidate roots per channel for targeted
+reply reads. Seeds stay outside unread retention until a thread has incoming
+activity. The existing unread projection decides relevance and survival after
+edit/delete closure; a root leaves the pending query only once incoming evidence
+survives that fold. Self-only or deleted pages continue with the composite
+`until`/`before_id` cursor. Explicit unfollows are excluded, and changing follow
+choices invalidates an already-demanded feed. Completed exact IDs clear their
+incomplete flags before other discovery batches finish, so later failures leave
+usable rows visible. Discovery caps one attempt at 256 raw requests, 4 MiB,
+2,000 authored seeds and 2,000 admitted events; hitting a cap shows an error,
+not complete history. Retrying starts a fresh bounded attempt and does not
+extend those limits.
+
 Auxiliary reads cap retained results at 2,000 events / 4 MiB per stage; the shared reader
 keeps its existing per-request deadline and cancellation. Missing roots,
 participation or older activity can omit rows; an empty Inbox does not prove

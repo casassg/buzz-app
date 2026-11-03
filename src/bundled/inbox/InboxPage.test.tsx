@@ -17,7 +17,8 @@ import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { huddleDescription } from "../../features/huddle/lifecycle";
-import { archiveKey, readArchives } from "./archive";
+import { archiveKey, readArchives, updateArchive } from "./archive";
+import { InboxBadge } from "./InboxBadge";
 import { viewRevision, writeView } from "../../shared/view-state";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
@@ -461,6 +462,13 @@ it.each(["shortcut", "row"])(
     fireEvent.click(first);
     await waitFor(() => expect(h.archive.current).toBeDefined());
     const [tab] = sideTabs();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Inbox conversations" }),
+      ).toHaveAttribute("aria-busy", "false"),
+    );
+    await Promise.all(h.readSteps.map((step) => step.work));
+    const readSteps = h.readSteps.length;
     // Leaving Inbox and returning restores the tab with its row's selection.
     view.unmount();
     render(h.view);
@@ -472,6 +480,8 @@ it.each(["shortcut", "row"])(
       if (!row) throw new Error("No selected row");
       return row;
     });
+    // Restoring the presentation must not replay the row's read command.
+    expect(h.readSteps).toHaveLength(readSteps);
     if (from === "shortcut") await archiveOpened(h);
     else
       fireEvent.click(
@@ -3788,7 +3798,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
   expect(h.published[0]?.tags.filter(([name]) => name === "p")).toEqual([]);
 });
 
-it("a Solo chat row shows, and is ordered by, a later agent reply that is not Inbox evidence", async () => {
+it("a Solo chat row includes ordinary agent responses under DMs, keeping threads separate", async () => {
   const h = fixture({ soloChannel: true, memberAgents: 1 });
   const progress = message(h.agent, "room", "Agent progress", 30);
   h.addEvent(progress);
@@ -3798,6 +3808,9 @@ it("a Solo chat row shows, and is ordered by, a later agent reply that is not In
   await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
   expect(rows()[1]).toHaveTextContent("A thread update");
   expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+  await chooseFilter("DMs");
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveTextContent("Agent progress");
 });
 
 it("Inbox keeps an open Solo chat timeline when a late reply regroups its mention", async () => {
@@ -4655,3 +4668,30 @@ it.each([false, true])(
       ).toBe(true);
   },
 );
+
+it("the navigation badge counts unread Inbox conversations before Inbox opens", async () => {
+  const h = fixture({ withDm: true });
+  render(<InboxBadge relay={h.relay} />);
+  const badge = await screen.findByRole("img", {
+    name: "3 unread conversations",
+  });
+  expect(badge).toHaveTextContent("3");
+  const thread = () => {
+    const item = h.session.unread.inbox().items.find((entry) => entry.thread);
+    if (!item) throw new Error("Missing thread row");
+    return item;
+  };
+  // Archived conversations leave the count, as they leave the Inbox view.
+  act(() => updateArchive(h.session.scope, thread(), true, 100));
+  await screen.findByRole("img", { name: "2 unread conversations" });
+  // A fresh reply in the archived thread brings it back.
+  const root = h.session.unread
+    .inbox()
+    .items.find((entry) => entry.thread)?.rootId;
+  const fresh = message(h.alice, "room", "A newer thread reply", 101, [
+    ["e", root ?? "", "", "reply"],
+  ]);
+  h.addEvent(fresh);
+  act(() => h.emit([fresh]));
+  await screen.findByRole("img", { name: "3 unread conversations" });
+});

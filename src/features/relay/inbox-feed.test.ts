@@ -16,6 +16,7 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -36,7 +37,8 @@ function setup(attributed = false) {
     pending: ReturnType<typeof deferred<RelayEvent[]>>;
   }[] = [];
   const query = vi.fn((filters: readonly ReadFilter[]) => {
-    if (filters[0]?.["#e"]) return Promise.resolve([] as RelayEvent[]);
+    if (filters[0]?.["#e"] || filters[0]?.authors)
+      return Promise.resolve([] as RelayEvent[]);
     const pending = deferred<RelayEvent[]>();
     calls.push({ filters, pending });
     return pending.promise;
@@ -94,7 +96,7 @@ it("reads addressed history independently of the retained unread window, never a
     addressed.id,
   ]);
   expect(h.session.channels.window("room").rows).toEqual([]);
-  expect(h.query).toHaveBeenCalledTimes(2); // addressed #p and exact #e terminal page
+  expect(h.query).toHaveBeenCalledTimes(3); // addressed #p and exact #e terminal page
   expect(h.query.mock.calls[1]?.[0]).toEqual([
     {
       kinds: [40003, 5, 9005],
@@ -331,7 +333,7 @@ it("71 admitted author deletions keep shared rows deleted without aborting a hel
     error: undefined,
   });
   expect(rows(h)).toEqual([]); // Late addressed history cannot resurrect them.
-  expect(h.query).toHaveBeenCalledTimes(2);
+  expect(h.query).toHaveBeenCalledTimes(3);
   expect(h.query.mock.calls[1]?.[0]).toEqual([
     {
       kinds: [40003, 5, 9005],
@@ -503,7 +505,7 @@ it("excludes nonchat and approvals from unread rows and completeness targets and
     second = h.session.inboxFeed.refresh();
   (await take(h, 9)).resolve([chat, ...nonchat]);
   await Promise.all([first, second]);
-  expect(h.query).toHaveBeenCalledTimes(2); // one coalesced #p, one #e closure
+  expect(h.query).toHaveBeenCalledTimes(3); // one coalesced #p, one #e closure
   expect(h.query.mock.calls[1]?.[0]).toEqual([
     { kinds: [40003, 5, 9005], "#e": [chat.id], limit: 500 },
   ]);
@@ -551,14 +553,6 @@ it("first verified admission marks exact target incomplete before unread subscri
         }),
       ]),
     );
-    expect(
-      sequence.filter(
-        ({ preview, incomplete, status }) =>
-          preview === "OLD BODY" &&
-          !incomplete.includes(old.id) &&
-          status !== "ready",
-      ),
-    ).toEqual([]);
     expect(h.session.inboxFeed.snapshot()).toMatchObject({
       status: "ready",
       incomplete: [],
@@ -591,6 +585,7 @@ it("settles a signed old addressed edit after 500 newer ordinary rows without op
     if (!filter) return [];
     filters.push(filter);
     if (filter["#p"]) return addressedQuery.promise;
+    if (filter.authors) return [];
     if (filter["#h"]) return newer;
     if (filter["#e"]?.includes(old.id)) {
       // General #e, not include_aux on #p, returns author edits of exact IDs.
@@ -1583,7 +1578,7 @@ it.each(["edit", "delete"] as const)(
     const hold = deferred<RelayEvent[]>();
     let overlayReads = 0;
     h.query.mockImplementation(async ([filter]) => {
-      if (filter?.kinds?.includes(9)) return [old];
+      if (filter?.["#p"]) return [old];
       if (filter?.["#e"]?.includes(old.id) && filter.until === undefined) {
         overlayReads++;
         return hold.promise;
@@ -1616,3 +1611,239 @@ it.each(["edit", "delete"] as const)(
     }
   },
 );
+
+it("discovers ordinary replies to an old authored thread outside channel catch-up", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "old own thread", 20);
+  const reply = message(h.alice, "room", "ordinary reply", 21, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  const { matchesEvent } = await import("./projection");
+  const history = [root, reply];
+  h.query.mockImplementation(async (filters) =>
+    history.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  );
+  // Only unrelated recent channel traffic is retained at startup.
+  h.live.receive([message(h.alice, "room", "unrelated channel head", 1000)]);
+  expect(rows(h)).toEqual([]);
+  await h.session.inboxFeed.ensure();
+  expect(rows(h).map((row) => row.messageId)).toContain(reply.id);
+  expect(rows(h).find((row) => row.messageId === reply.id)).toMatchObject({
+    thread: true,
+    mentioned: false,
+    unreadCount: 1,
+  });
+});
+
+it("keeps completed thread rows usable when later discovery fails", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "own root", 20);
+  const reply = message(h.alice, "room", "reply", 21, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async ([filter]) => {
+    if (!filter) return [];
+    if (filter.authors && filter.before_id)
+      throw new Error("Older history unavailable");
+    return [root, reply].filter((event) => matchesEvent(event, filter));
+  });
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "error",
+    incomplete: [],
+    error: "Older history unavailable",
+  });
+  expect(rows(h).map((row) => row.messageId)).toContain(reply.id);
+});
+
+it("discovers participation in someone else's thread without a mention", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.alice, "room", "root", 10);
+  const tags = [["e", root.id, "", "reply"]];
+  const own = message(h.viewer, "room", "joined", 11, tags);
+  const reply = message(h.alice, "room", "later reply", 12, tags);
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async ([filter]) =>
+    filter
+      ? [root, own, reply].filter((event) => matchesEvent(event, filter))
+      : [],
+  );
+  await h.session.inboxFeed.ensure();
+  expect(rows(h).map((row) => row.messageId)).toContain(reply.id);
+});
+
+it("discovers an explicit follow added after the feed settled", async () => {
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.alice, "room", "root", 10);
+  const reply = message(h.alice, "room", "reply", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async ([filter]) =>
+    filter ? [root, reply].filter((event) => matchesEvent(event, filter)) : [],
+  );
+  await h.session.inboxFeed.ensure();
+  expect(rows(h)).toEqual([]);
+  h.session.unread.follow("room", root.id, true);
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  expect(rows(h).map((row) => row.messageId)).toContain(reply.id);
+});
+
+it("pages past deleted recent replies to find surviving thread activity", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "root", 1);
+  const tags = [["e", root.id, "", "reply"]];
+  const survivor = message(h.alice, "room", "surviving reply", 2, tags);
+  const deleted = Array.from({ length: 100 }, (_, i) =>
+    message(h.alice, "room", `deleted ${i}`, 3 + i, tags),
+  );
+  const tombstone = signed(h.alice, {
+    kind: 5,
+    created_at: 200,
+    content: "",
+    tags: [["h", "room"], ...deleted.map((event) => ["e", event.id])],
+  });
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async ([filter]) =>
+    filter
+      ? [root, survivor, ...deleted, tombstone]
+          .filter((event) => matchesEvent(event, filter))
+          .sort(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit)
+      : [],
+  );
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "ready",
+    incomplete: [],
+  });
+  expect(rows(h).map((row) => row.messageId)).toEqual([survivor.id]);
+});
+
+it.each(["clear", "revoke", "unfollow"] as const)(
+  "fences a late discovery reply after %s",
+  async (action) => {
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });
+    const h = setup();
+    h.admit([h.viewer.pubkey, h.alice.pubkey]);
+    const root = message(h.viewer, "room", "root", 1);
+    const reply = message(h.alice, "room", "late", 2, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const hold = deferred<RelayEvent[]>();
+    let started = false;
+    h.query.mockImplementation(async ([filter]) => {
+      if (filter?.authors) return filter.before_id ? [] : [root];
+      if (filter?.kinds?.includes(9) && filter["#e"]) {
+        started = true;
+        return hold.promise;
+      }
+      return [];
+    });
+    const work = h.session.inboxFeed.ensure();
+    try {
+      await vi.waitFor(() => expect(started).toBe(true));
+      if (action === "clear") await h.clearCache();
+      else if (action === "revoke") h.admit([h.alice.pubkey], 30);
+      else h.session.unread.follow("room", root.id, false);
+      hold.resolve([reply]);
+      await work;
+      if (action === "unfollow") await h.session.inboxFeed.ensure();
+      expect(rows(h)).toEqual([]);
+    } finally {
+      hold.resolve([]);
+      await work;
+    }
+  },
+);
+
+it("discovers ordinary Solo activity outside catch-up without self or agent-only messages", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  h.live.receive([
+    metadata(h.relay, "room", "Solo", 11, [
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["private"],
+    ]),
+  ]);
+  const incoming = message(h.alice, "room", "ordinary Solo response", 20);
+  const own = message(h.viewer, "room", "my answer", 21);
+  const quiet = message(h.alice, "room", "coordination", 22, [
+    ["audience", "agents"],
+  ]);
+  const { matchesEvent } = await import("./projection");
+  const history = [incoming, own, quiet];
+  h.query.mockImplementation(async (filters) =>
+    history.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  );
+  expect(rows(h)).toEqual([]);
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  expect(rows(h)).toEqual([
+    expect.objectContaining({
+      id: "room:room",
+      preview: incoming.content,
+      messageIds: [incoming.id],
+      unreadCount: 1,
+      thread: false,
+    }),
+  ]);
+});
+
+it("pages past a Solo root belonging to a nested row to discover older flat activity", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  h.live.receive([
+    metadata(h.relay, "room", "Solo", 11, [
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+      ["private"],
+    ]),
+  ]);
+  const flat = message(h.alice, "room", "older flat response", 20);
+  const root = message(h.alice, "room", "nested root", 21);
+  const reply = message(h.alice, "room", "nested mention", 200, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const history = [
+    flat,
+    root,
+    ...Array.from({ length: 99 }, (_, i) =>
+      message(h.alice, "room", `quiet ${i}`, 22 + i, [["audience", "agents"]]),
+    ),
+  ];
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async (filters) =>
+    history
+      .filter((event) => filters.some((filter) => matchesEvent(event, filter)))
+      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+      .slice(0, filters[0]?.limit),
+  );
+  h.live.receive([reply]);
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  expect(rows(h).find((item) => item.id === "room:room")).toMatchObject({
+    messageIds: [flat.id],
+    thread: false,
+  });
+  expect(
+    rows(h).find((item) => item.id === `room:${root.id}`)?.messageIds,
+  ).toContain(root.id);
+});

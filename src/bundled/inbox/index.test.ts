@@ -76,3 +76,16 @@ it("opens the Inbox page with filters from four chords, including from the compo
   expect(page.route.validate({ activity: "bogus" })).toBe(false);
   expect(page.handlesNavigation).toBeUndefined();
 });
+
+it("registers the Inbox page with a navigation badge", () => {
+  const pages = { register: vi.fn() };
+  apply({
+    pages,
+    relay: {},
+    navigation: {},
+    shortcuts: { register: vi.fn() },
+  } as unknown as Parameters<typeof apply>[0]);
+  expect(pages.register).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "inbox", badge: expect.any(Function) }),
+  );
+});

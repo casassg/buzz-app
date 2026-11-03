@@ -5,6 +5,7 @@ import {
   selectCommunity,
   settingsSections,
   settleShellToggle,
+  inboxName,
 } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
@@ -914,10 +915,8 @@ test("non-ready sidebar keeps page rows and Retry reachable by pointer scrolling
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  await expectUnclippedFocus(
-    sidebar.getByRole("button", { name: "Inbox", exact: true }),
-  );
-  await sidebar.getByRole("button", { name: "Inbox", exact: true }).click();
+  await expectUnclippedFocus(sidebar.getByRole("button", { name: inboxName }));
+  await sidebar.getByRole("button", { name: inboxName }).click();
   await expect(
     page.getByRole("heading", { name: "Inbox", exact: true }),
   ).toBeVisible();

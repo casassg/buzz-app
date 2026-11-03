@@ -2,6 +2,13 @@ import { expect } from "@playwright/test";
 import { verifyEvent } from "nostr-tools";
 import { createHash } from "node:crypto";
 
+/** Inbox's background thread history pages read exactly kinds 9 and 40002;
+ * channel and thread windows also read 40008, so tests keep holding those. */
+export const inboxHistoryPage = (filter) =>
+  filter.kinds?.length === 2 &&
+  filter.kinds.includes(9) &&
+  filter.kinds.includes(40002);
+
 /** Model the relay boundaries that matter to this journey, not a replacement
  * session: AUTH, explicit channel fan-out, EOSE, CLOSED and HTTP quota reasons.
  * The production broker owns all pacing, signing, SSE and retry controls. */
@@ -539,9 +546,11 @@ export function policyRelay({
               resolve(Response.json(result));
             });
           });
+        // Hold older channel and thread pages, not Inbox's thread history.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
+          !inboxHistoryPage(filter) &&
           holdOlder
         )
           return new Promise((resolve, reject) => {

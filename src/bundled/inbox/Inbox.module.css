@@ -267,6 +267,30 @@ html[data-keyboard-navigation] .detailHeadingLink:focus-visible {
   }
 }
 
+/* The sidebar's count chip (Channels' .dmCount): complete caption role in
+   subtle ink, so the number stays quieter than the row label. Sized in `lh`
+   so it grows with enlarged text; 1–9 is a circle, wider counts a pill. */
+.navBadge {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-width: 1lh;
+  height: 1lh;
+  margin-inline-end: var(--space-1);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--affordance-subtle);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
+[data-selected] .navBadge {
+  background: var(--surface-row-selected-detail);
+  color: var(--text-row-selected-detail);
+}
+
 .unreadDot {
   width: var(--space-2);
   height: var(--space-2);

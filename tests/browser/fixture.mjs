@@ -16,7 +16,7 @@ import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
-import { policyRelay } from "./policy-relay.mjs";
+import { policyRelay, inboxHistoryPage } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
@@ -2272,10 +2272,12 @@ export const test = base.extend({
           ).values(),
         ];
         for (const { id } of result) served.add(id);
+        // Hold older channel and thread pages, not Inbox's thread history.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
-          filter["#h"]?.length
+          filter["#h"]?.length &&
+          !inboxHistoryPage(filter)
         ) {
           const queuedAt = performance.now();
           const receipt = {

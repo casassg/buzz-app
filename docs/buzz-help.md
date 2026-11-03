@@ -125,6 +125,11 @@ that agent in Buzz; they do not notify the external app through this connection.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
+- **Inbox** collects DMs, ordinary responses in Solo chats, mentions of you, and replies in threads you started,
+  replied in, or follow. Solo chats appear under All and DMs; their nested threads stay separate. Agent-only coordination stays out. Its sidebar entry shows how many of
+  those conversations are unread, not counting ones you archived. When opened, it also looks for
+  older mentions and replies in your older threads, which then join that count. History
+  is bounded; a loading error means some older conversations may still be missing.
 - **Communities** have their own channels, people, and agents. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and

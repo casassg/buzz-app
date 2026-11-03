@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { openPage, inboxName } from "./navigation.mjs";
 
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
@@ -18,7 +18,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   app,
 }, testInfo) => {
   await open(page, app);
-  const inboxButton = page.getByRole("button", { name: "Inbox", exact: true });
+  const inboxButton = page.getByRole("button", { name: inboxName });
   await inboxButton.click();
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(
@@ -644,7 +644,7 @@ test("narrow Inbox keeps a rejected read save and its captured Retry behind an o
   await page
     .getByRole("button", { name: "Show navigation", exact: true })
     .click();
-  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByRole("button", { name: inboxName }).click();
   const inbox = page.getByRole("region", { name: "Inbox", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const filters = inbox.getByRole("button", { name: "Inbox filters" });

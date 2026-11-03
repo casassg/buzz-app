@@ -239,3 +239,6 @@ export function pageChoice(group, name) {
     .getByRole("option", { name, exact: true })
     .or(group.getByRole("row", { name, exact: true }));
 }
+
+/** The Inbox navigation entry's name, followed by its unread count when shown. */
+export const inboxName = /^Inbox(?: \d+\+? unread conversations?)?$/;

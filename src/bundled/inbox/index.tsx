@@ -2,6 +2,7 @@ import type { PluginModule } from "../../plugins/api";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { InboxPage, type ArchiveShortcut } from "./InboxPage";
 import { inboxRouteTarget, isInboxRoute, type InboxRoute } from "./route";
+import { InboxBadge } from "./InboxBadge";
 export const inject = [
   "pages",
   "relay",
@@ -61,6 +62,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     layout: "workspace",
     primary: true,
     route: { version: 1, validate: isInboxRoute },
+    badge: () => <InboxBadge relay={relay} />,
     component: ({ navigation }) => (
       <InboxPage
         host={ctx}
