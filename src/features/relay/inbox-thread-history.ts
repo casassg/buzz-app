@@ -6,13 +6,37 @@ import { byteSize } from "./budget";
 
 type Cursor = { until: number; before_id: string };
 type Target = { channelId: string; rootId: string; witness?: RelayEvent };
+
+/** How far back discovery looks for participating threads and Solo replies. */
+export const INBOX_THREAD_WINDOW_SECONDS = 30 * 86_400;
+
+/** Reaching the read budget ends discovery early; it is not a failure. */
+class Limited extends Error {}
+
 /** Finite discovery independent of busy-channel catch-up. Authored seeds stay
- * outside unread retention; only threads with incoming replies admit a witness. */
-export async function discoverInboxThreads({
+ * outside unread retention; only threads with incoming replies admit a witness.
+ * Reads stay inside the `since` window. Reaching the budget is bounded
+ * completion (`complete: false`): rows already admitted stay, and retrying
+ * would repeat the same walk. */
+export async function discoverInboxThreads(
+  options: Parameters<typeof walk>[0],
+): Promise<{ complete: boolean }> {
+  try {
+    await walk(options);
+    return { complete: true };
+  } catch (error) {
+    if (error instanceof Limited && !options.signal.aborted)
+      return { complete: false };
+    throw error;
+  }
+}
+
+async function walk({
   viewer,
   channelIds,
   soloChannelIds = [],
   choices,
+  since,
   read,
   admit,
   signal,
@@ -21,6 +45,8 @@ export async function discoverInboxThreads({
   channelIds: readonly string[];
   soloChannelIds?: readonly string[];
   choices: ThreadFollows;
+  /** Oldest creation time read, in Unix seconds. */
+  since?: number;
   read: (
     filter: ReadFilter,
     signal: AbortSignal,
@@ -38,16 +64,14 @@ export async function discoverInboxThreads({
     bytes = 0,
     requests = 0,
     retained = 0;
-  const limited = () =>
-    new Error(
-      "Some older conversations could not be loaded within the Inbox history limit.",
-    );
+  const limited = () => new Limited("Inbox thread history reached its limit.");
   const page = async (filter: ReadFilter, cursor?: Cursor) => {
     signal.throwIfAborted();
     if (++requests > 256) throw limited();
-    const rows = [...(await read({ ...filter, ...cursor }, signal))].sort(
-      (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-    );
+    const window = since === undefined ? {} : { since };
+    const rows = [
+      ...(await read({ ...filter, ...window, ...cursor }, signal)),
+    ].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
     signal.throwIfAborted();
     bytes += byteSize(rows);
     if (bytes > 4 * 1024 * 1024) throw limited();
@@ -66,8 +90,12 @@ export async function discoverInboxThreads({
     until: event.created_at,
     before_id: event.id,
   });
+  const channelOf = (event: RelayEvent) => {
+    const tags = event.tags.filter(([name]) => name === "h");
+    return tags.length === 1 ? tags[0]?.[1] : undefined;
+  };
   const load = async (targets: readonly Target[]) => {
-    const grouped = new Map<string, Map<string, Target>>();
+    const pending = new Map<string, Target>();
     for (const target of targets) {
       const key = `${target.channelId}:${target.rootId}`;
       if (
@@ -77,63 +105,67 @@ export async function discoverInboxThreads({
       )
         continue;
       seen.add(key);
-      const group = grouped.get(target.channelId) ?? new Map<string, Target>();
-      group.set(target.rootId, target);
-      grouped.set(target.channelId, group);
+      pending.set(key, target);
     }
-    for (const [channelId, pending] of grouped) {
-      // Stop each root only after its incoming activity survives the shared
-      // edit/delete fold; a busy root must not consume other roots' budget.
-      let cursor: Cursor | undefined;
-      while (pending.size) {
-        const replies = await page(
-          {
-            kinds: [9, 40002],
-            "#h": [channelId],
-            "#e": [...pending.keys()],
-            limit: 100,
-          },
-          cursor,
-        );
-        const found = new Map<string, RelayEvent[]>();
-        for (const event of replies) {
-          const root = threadReference(event)?.rootId;
-          if (
-            !root ||
-            !pending.has(root) ||
-            event.pubkey === viewer ||
-            agentAudience(event)
-          )
-            continue;
-          const group = found.get(root) ?? [];
-          group.push(event);
-          found.set(root, group);
-        }
-        if (found.size) {
-          const roots = await page({
-            kinds: [9, 40002],
-            ids: [...found.keys()],
-            "#h": [channelId],
-            limit: found.size,
-          });
-          const events = [...roots];
-          for (const [root, replies] of found) {
-            const witness = pending.get(root)?.witness;
-            if (witness) events.push(witness);
-            events.push(...replies);
-          }
-          retained += events.length;
-          if (retained > 2000) throw limited();
-          const surviving = new Set(await admit(events, signal));
-          signal.throwIfAborted();
-          for (const [root, replies] of found)
-            if (replies.some((event) => surviving.has(event.id)))
-              pending.delete(root);
-        }
-        const last = replies.at(-1);
-        if (!last) break;
-        cursor = cursorOf(last);
+    // One walk covers every channel in the batch. Each root stops only after
+    // its incoming activity survives the shared edit/delete fold, so a busy
+    // root must not consume other roots' budget.
+    let cursor: Cursor | undefined;
+    while (pending.size) {
+      const open = [...pending.values()];
+      const replies = await page(
+        {
+          kinds: [9, 40002],
+          "#h": [...new Set(open.map((target) => target.channelId))],
+          "#e": [...new Set(open.map((target) => target.rootId))],
+          limit: 100,
+        },
+        cursor,
+      );
+      const found = new Map<string, RelayEvent[]>();
+      for (const event of replies) {
+        const root = threadReference(event)?.rootId;
+        const key = root && `${channelOf(event)}:${root}`;
+        if (
+          !key ||
+          !pending.has(key) ||
+          event.pubkey === viewer ||
+          agentAudience(event)
+        )
+          continue;
+        const group = found.get(key) ?? [];
+        group.push(event);
+        found.set(key, group);
       }
+      if (found.size) {
+        const threads = open.filter((target) =>
+          found.has(`${target.channelId}:${target.rootId}`),
+        );
+        const roots = await page({
+          kinds: [9, 40002],
+          ids: [...new Set(threads.map((target) => target.rootId))],
+          "#h": [...new Set(threads.map((target) => target.channelId))],
+          limit: found.size,
+        });
+        const events = roots.filter((root) =>
+          found.has(`${channelOf(root)}:${root.id}`),
+        );
+        for (const [key, replies] of found) {
+          const witness = pending.get(key)?.witness;
+          if (witness) events.push(witness);
+          events.push(...replies);
+        }
+        retained += events.length;
+        if (retained > 2000) throw limited();
+        const surviving = new Set(await admit(events, signal));
+        signal.throwIfAborted();
+        for (const [key, replies] of found)
+          if (replies.some((event) => surviving.has(event.id)))
+            pending.delete(key);
+      }
+      const last = replies.at(-1);
+      if (!last) break;
+      cursor = cursorOf(last);
     }
   };
   // Find a surviving incoming flat message per Solo chat, independently of

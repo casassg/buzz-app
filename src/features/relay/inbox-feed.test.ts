@@ -9,6 +9,7 @@ import type { RelayEvent, ReadFilter } from "./events";
 import type { LiveCallbacks } from "./live";
 import { byteSize } from "./budget";
 import { createInboxFeed } from "./inbox-feed";
+import { INBOX_THREAD_WINDOW_SECONDS } from "./inbox-thread-history";
 
 // General #e reads return an empty terminal page. The ordinary #p response is
 // still explicitly gated by each test; no incidental timer orders admission.
@@ -18,6 +19,14 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+/** Fixture timestamps are small; place "now" so they fall inside the thread
+ * discovery window (plus `later` seconds). */
+function threadWindowNow(later = 0) {
+  vi.useFakeTimers({
+    toFake: ["Date"],
+    now: (INBOX_THREAD_WINDOW_SECONDS + later) * 1000,
+  });
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -1613,6 +1622,7 @@ it.each(["edit", "delete"] as const)(
 );
 
 it("discovers ordinary replies to an old authored thread outside channel catch-up", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const root = message(h.viewer, "room", "old own thread", 20);
@@ -1639,7 +1649,32 @@ it("discovers ordinary replies to an old authored thread outside channel catch-u
   });
 });
 
+it("does not read threads older than the discovery window", async () => {
+  threadWindowNow(100);
+  const h = setup();
+  h.admit([h.viewer.pubkey, h.alice.pubkey]);
+  const root = message(h.viewer, "room", "months-old own thread", 20);
+  const reply = message(h.alice, "room", "months-old reply", 21, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const { matchesEvent } = await import("./projection");
+  h.query.mockImplementation(async (filters) =>
+    [root, reply].filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+  );
+  await h.session.inboxFeed.ensure();
+  expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+  expect(rows(h)).toEqual([]);
+  expect(
+    h.query.mock.calls.some(([filters]) =>
+      filters.some((filter) => filter.authors && filter.since === 100),
+    ),
+  ).toBe(true);
+});
+
 it("keeps completed thread rows usable when later discovery fails", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const root = message(h.viewer, "room", "own root", 20);
@@ -1663,6 +1698,7 @@ it("keeps completed thread rows usable when later discovery fails", async () => 
 });
 
 it("discovers participation in someone else's thread without a mention", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const root = message(h.alice, "room", "root", 10);
@@ -1680,6 +1716,7 @@ it("discovers participation in someone else's thread without a mention", async (
 });
 
 it("discovers an explicit follow added after the feed settled", async () => {
+  threadWindowNow();
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() });
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
@@ -1700,6 +1737,7 @@ it("discovers an explicit follow added after the feed settled", async () => {
 });
 
 it("pages past deleted recent replies to find surviving thread activity", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   const root = message(h.viewer, "room", "root", 1);
@@ -1771,6 +1809,7 @@ it.each(["clear", "revoke", "unfollow"] as const)(
 );
 
 it("discovers ordinary Solo activity outside catch-up without self or agent-only messages", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   h.live.receive([
@@ -1807,6 +1846,7 @@ it("discovers ordinary Solo activity outside catch-up without self or agent-only
 });
 
 it("pages past a Solo root belonging to a nested row to discover older flat activity", async () => {
+  threadWindowNow();
   const h = setup();
   h.admit([h.viewer.pubkey, h.alice.pubkey]);
   h.live.receive([

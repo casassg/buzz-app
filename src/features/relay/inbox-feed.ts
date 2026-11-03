@@ -1,4 +1,7 @@
-import { discoverInboxThreads } from "./inbox-thread-history";
+import {
+  discoverInboxThreads,
+  INBOX_THREAD_WINDOW_SECONDS,
+} from "./inbox-thread-history";
 import type { ThreadFollows } from "./thread-follows";
 import { byteSize } from "./budget";
 import type { ChannelQueries } from "./contracts";
@@ -144,6 +147,23 @@ export function createInboxFeed({
       // Authorized responses can have short pages. Only empty ends the walk.
     }
   }
+  /** One closure governs admission for addressed and thread history: stored
+   * edits and deletions of the targets, then deletions of their edits. */
+  async function settle(ids: readonly string[], signal: AbortSignal) {
+    const updates = await overlays(ids, [40003, 5, 9005], signal);
+    await overlays(
+      [
+        ...new Set([
+          ...retainedEditIds(ids),
+          ...updates
+            .filter((event) => event.kind === 40003)
+            .map((event) => event.id),
+        ]),
+      ],
+      [5, 9005],
+      signal,
+    );
+  }
   async function refresh() {
     if (closed) return;
     if (work) return work;
@@ -184,18 +204,7 @@ export function createInboxFeed({
             ...project(mentions, true).map((event) => event.id),
           ]),
         ];
-        const updates = await overlays(targets, [40003, 5, 9005], owned.signal);
-        const edits = updates.filter((event) => event.kind === 40003);
-        await overlays(
-          [
-            ...new Set([
-              ...retainedEditIds(targets),
-              ...edits.map((event) => event.id),
-            ]),
-          ],
-          [5, 9005],
-          owned.signal,
-        );
+        await settle(targets, owned.signal);
         if (closed || generation !== epoch) return;
         publish({ incomplete: [] });
         if (threadHistory)
@@ -207,6 +216,8 @@ export function createInboxFeed({
                 (channel) =>
                   !channel.huddle &&
                   !channel.cached &&
+                  !channel.archived &&
+                  !channel.metadataPending &&
                   channel.members?.includes(viewer),
               )
               .map((channel) => channel.id)
@@ -225,6 +236,7 @@ export function createInboxFeed({
               .map((channel) => channel.id)
               .sort(),
             choices: threadHistory.choices(),
+            since: Math.floor(Date.now() / 1000) - INBOX_THREAD_WINDOW_SECONDS,
             read: threadHistory.read,
             signal: owned.signal,
             admit: async (events, signal, flatOnly) => {
@@ -241,19 +253,7 @@ export function createInboxFeed({
                 },
               );
               const ids = project(admitted).map((event) => event.id);
-              const updates = await overlays(ids, [40003, 5, 9005], signal);
-              await overlays(
-                [
-                  ...new Set([
-                    ...retainedEditIds(ids),
-                    ...updates
-                      .filter((event) => event.kind === 40003)
-                      .map((event) => event.id),
-                  ]),
-                ],
-                [5, 9005],
-                signal,
-              );
+              await settle(ids, signal);
               if (closed || generation !== epoch || signal.aborted) return [];
               const settled = new Set(ids);
               publish({

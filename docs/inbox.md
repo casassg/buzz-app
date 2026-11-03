@@ -162,8 +162,9 @@ event, the finite attempt stays failed/incomplete rather than treating the filte
 page as exhausted history. Explicit Retry can settle it once existing shared
 readers have admitted the missing reference; Inbox adds no reference-resolution loop.
 Thread discovery separately pages viewer-authored posts/replies and explicit
-follow choices, then batches up to 100 candidate roots per channel for targeted
-reply reads. Seeds stay outside unread retention until a thread has incoming
+follow choices in current, unarchived channels, then batches up to 100
+candidate roots across channels for targeted reply reads. Every discovery read,
+Solo included, stays within the last 30 days. Seeds stay outside unread retention until a thread has incoming
 activity. The existing unread projection decides relevance and survival after
 edit/delete closure; a root leaves the pending query only once incoming evidence
 survives that fold. Self-only or deleted pages continue with the composite
@@ -171,9 +172,9 @@ survives that fold. Self-only or deleted pages continue with the composite
 choices invalidates an already-demanded feed. Completed exact IDs clear their
 incomplete flags before other discovery batches finish, so later failures leave
 usable rows visible. Discovery caps one attempt at 256 raw requests, 4 MiB,
-2,000 authored seeds and 2,000 admitted events; hitting a cap shows an error,
-not complete history. Retrying starts a fresh bounded attempt and does not
-extend those limits.
+2,000 authored seeds and 2,000 admitted events. Hitting a cap ends discovery
+as bounded completion: admitted rows stay and Inbox shows no error, because a
+retry would repeat the same walk. A non-advancing page is still an error.
 
 Auxiliary reads cap retained results at 2,000 events / 4 MiB per stage; the shared reader
 keeps its existing per-request deadline and cancellation. Missing roots,

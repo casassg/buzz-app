@@ -197,3 +197,63 @@ it("finds quiet Solo activity after a busy Solo settles and skips deleted or age
     ),
   ).toBe(true);
 });
+
+it("ends a lifetime of authored posts as bounded completion, not an error", async () => {
+  const viewer = keypair();
+  const post = message(viewer, "room", "post", 1);
+  // Already-verified clones; signatures are irrelevant to the walk.
+  const f = fixture(
+    Array.from({ length: 2001 }, (_, i) => ({
+      ...post,
+      id: (i + 1).toString(16).padStart(64, "0"),
+      created_at: 1 + i,
+    })),
+  );
+  await expect(
+    discoverInboxThreads({
+      ...f,
+      viewer: viewer.pubkey,
+      channelIds: ["room"],
+      choices: new Map(),
+      signal: new AbortController().signal,
+    }),
+  ).resolves.toEqual({ complete: false });
+});
+
+it("reads replies for many channels together and stays in the window", async () => {
+  const viewer = keypair(),
+    other = keypair();
+  const channelIds = Array.from({ length: 20 }, (_, i) => `room-${i}`);
+  const post = message(viewer, "room-0", "post", 1);
+  const posts = Array.from({ length: 1300 }, (_, i) => ({
+    ...post,
+    id: (i + 1).toString(16).padStart(64, "0"),
+    created_at: 100 + i,
+    tags: [["h", `room-${i % 20}`]],
+  }));
+  // Post 650 (room-10) gets the only incoming reply.
+  const root = posts[650];
+  if (!root) throw new Error("missing fixture post");
+  const reply = message(other, "room-10", "reply", 5000, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const stale = message(viewer, "room-0", "outside the window", 50);
+  const f = fixture([...posts, reply, stale]);
+  await expect(
+    discoverInboxThreads({
+      ...f,
+      viewer: viewer.pubkey,
+      channelIds,
+      choices: new Map(),
+      since: 100,
+      signal: new AbortController().signal,
+    }),
+  ).resolves.toEqual({ complete: true });
+  expect(
+    f.admit.mock.calls.flatMap(([events]) => events).map((event) => event.id),
+  ).toEqual(expect.arrayContaining([root.id, reply.id]));
+  expect(f.read.mock.calls.every(([filter]) => filter.since === 100)).toBe(
+    true,
+  );
+  expect(f.read.mock.calls.length).toBeLessThan(40);
+});
