@@ -648,6 +648,52 @@ it("falls back from a failed toolbar image and isolates toolbar badge errors", (
   }
 });
 
+it("describes a toolbar page button with its badge", () => {
+  const current = createServices();
+  services = current;
+  render(
+    <ToastProvider>
+      <AppShell
+        pages={[
+          {
+            id: "inbox",
+            key: "example/inbox",
+            pluginId: "example",
+            revision: "one",
+            title: "Inbox",
+            primary: true,
+            placement: "toolbar",
+            component: () => null,
+            badge: () => (
+              <span role="img" aria-label="3 unread conversations">
+                3
+              </span>
+            ),
+          },
+        ]}
+        selected="example/inbox"
+        navigationAttempt=""
+        onSelect={() => {}}
+        tone="default"
+        communities={current.communities}
+        accountActions={current.accountActions}
+        appearance={testAppearance}
+      >
+        content
+      </AppShell>
+    </ToastProvider>,
+  );
+  const button = screen.getByRole("button", { name: "Inbox" });
+  // jsdom's accname reads the described wrapper's text ("3"); Chromium and
+  // Playwright's accname use the labelled image: "3 unread conversations".
+  const description = document.getElementById(
+    button.getAttribute("aria-describedby") ?? "",
+  );
+  expect(description).toContainElement(
+    screen.getByRole("img", { name: "3 unread conversations" }),
+  );
+});
+
 it("uses chrome tabs with manual keyboard selection, page linkage, and isolated badges", async () => {
   const current = createServices();
   services = current;

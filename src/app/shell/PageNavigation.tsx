@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { NavigationOpenOptions } from "../../features/navigation/controller";
 import {
@@ -30,6 +31,7 @@ export function PageNavigation({
   placement?: "sidebar" | "topbar" | "toolbar";
 }) {
   const presentation = usePagePresentation();
+  const badgeId = useId();
   if (placement === "topbar") {
     return (
       <Tabs
@@ -60,7 +62,7 @@ export function PageNavigation({
       />
     );
   }
-  return pages.map((page) => {
+  return pages.map((page, index) => {
     const { label, icon, image, avatar } = presentation(page);
     const Badge = page.badge;
     const badge = Badge && (
@@ -90,17 +92,25 @@ export function PageNavigation({
         strokeWidth={2.5}
       />
     );
+    // The toolbar badge sits beside its icon-only button, not inside it, so
+    // the button names the page and the badge describes it.
+    const describedBy = badge ? `${badgeId}-${index}` : undefined;
     return placement === "toolbar" ? (
       <span className="shell-toolbar-page" key={page.key}>
         <IconButton
           aria-label={label}
+          aria-describedby={describedBy}
           title={label}
           variant="chrome"
           aria-current={selected === page.key ? "page" : undefined}
           onClick={select}
           icon={pageIcon}
         />
-        {badge && <span className="shell-toolbar-badge">{badge}</span>}
+        {badge && (
+          <span id={describedBy} className="shell-toolbar-badge">
+            {badge}
+          </span>
+        )}
       </span>
     ) : (
       <NavigationItem
