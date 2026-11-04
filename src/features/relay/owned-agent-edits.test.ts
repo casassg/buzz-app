@@ -189,6 +189,13 @@ it.each(["member", "guest"])(
         profile(stranger, stranger),
       ]);
       await connection.session.outbox?.ready();
+      // A guest's edit is signed only once the directory's own attestation
+      // names its owner; editOwnedAgent's check can settle first.
+      await vi.waitFor(() =>
+        expect(connection.session.profiles.owner?.(agent.pubkey)).toBe(
+          owner.pubkey,
+        ),
+      );
       await expect(
         connection.session.messages.editOwnedAgent(
           foreign.id,
