@@ -1431,6 +1431,60 @@ it("links a decision provider's details to Decisions API", async () => {
   expect(onSection).toHaveBeenCalledExactlyOnceWith("decisions");
 });
 
+it.each([
+  { start: "hidden", top: -1100, scrolled: true },
+  { start: "in view", top: 260, scrolled: false },
+])(
+  "brings a linked section's start into view only when it is hidden (start $start)",
+  async ({ top, scrolled }) => {
+    const user = userEvent.setup();
+    const { cards } = registry([
+      {
+        ...card("authors", "GitHub comment authors", "Plugins"),
+        key: "buzz.github/authors",
+        pluginId: "buzz.github",
+      },
+    ]);
+    const { view, links } = pluginSectionsFixture(cards);
+    // Stacked navigation and content share one scrollport, which keeps its
+    // offset when the section changes.
+    const stacked = (section: string) => (
+      <div data-testid="scrollport" style={{ overflowY: "auto" }}>
+        {view(section)}
+      </div>
+    );
+    const { rerender } = render(stacked("plugins"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "View GitHub details" }),
+    );
+    await user.click(
+      within(links("GitHub") as HTMLElement).getByRole("button", {
+        name: "GitHub comment authors",
+      }),
+    );
+    const content = document.getElementById("settings-content") as HTMLElement;
+    const scrollIntoView = vi.fn();
+    content.scrollIntoView = scrollIntoView;
+    vi.spyOn(
+      screen.getByTestId("scrollport"),
+      "getBoundingClientRect",
+    ).mockReturnValue({ top: 240, bottom: 780 } as DOMRect);
+    vi.spyOn(content, "getBoundingClientRect").mockReturnValue({
+      top,
+      bottom: top + 3000,
+    } as DOMRect);
+
+    rerender(stacked("buzz.github/authors"));
+    expect(screen.getByText("GitHub comment authors body")).toBeVisible();
+    expect(content).toHaveFocus();
+    if (scrolled)
+      expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
+        block: "start",
+      });
+    else expect(scrollIntoView).not.toHaveBeenCalled();
+  },
+);
+
 it("gives contributed cards their own community sections and retires removed cards", async () => {
   const { cards, set } = registry([
     card("hosted", "Hosted communities", "Communities"),

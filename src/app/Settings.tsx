@@ -283,6 +283,14 @@ function scrollport(element: Element) {
   return null;
 }
 
+/** Whether any scrollport around `element` has scrolled past its start. */
+function startHidden(element: Element) {
+  const top = element.getBoundingClientRect().top;
+  for (let port = scrollport(element); port; port = scrollport(port))
+    if (top < port.getBoundingClientRect().top) return true;
+  return false;
+}
+
 function pluginToggleDisabled(
   plugin: PluginInfo,
   access: AdminAccessState,
@@ -761,12 +769,17 @@ export function Settings({
   useLayoutEffect(() => {
     if (selected !== contentFocus.current) return;
     contentFocus.current = undefined;
-    (selected === "plugins"
-      ? pluginSection.current
-      : document.getElementById(
-          navigationPane ? "settings-content" : "main-content",
-        )
-    )?.focus({ preventScroll: true });
+    const target =
+      selected === "plugins"
+        ? pluginSection.current
+        : document.getElementById(
+            navigationPane ? "settings-content" : "main-content",
+          );
+    target?.focus({ preventScroll: true });
+    // Stacked navigation shares one scrollport with the content, which keeps
+    // the previous section's offset; start the new one where the sidebar does.
+    if (target && startHidden(target))
+      target.scrollIntoView({ block: "start" });
   }, [selected, navigationPane]);
   const openSection =
     onSection &&
