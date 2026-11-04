@@ -131,6 +131,7 @@ export function AgentCreateDialog({
   const form = useId();
   const Create = type?.Create;
   const Model = type?.CreateModel;
+  const Thinking = type?.CreateThinking;
   const close = () => setOpen(false);
   const chooseModel = (item: RegisteredAgentType, next: unknown) => {
     setTypeKey(item.key);
@@ -307,6 +308,19 @@ export function AgentCreateDialog({
                   title="Model"
                   trailing={
                     <Model
+                      key={type.key}
+                      config={config}
+                      disabled={pending}
+                      onChange={(next) => chooseModel(type, next)}
+                    />
+                  }
+                />
+              )}
+              {Thinking && (
+                <PreferenceRow
+                  title="Thinking"
+                  trailing={
+                    <Thinking
                       key={type.key}
                       config={config}
                       disabled={pending}

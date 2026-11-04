@@ -18,6 +18,7 @@ import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import type {
   Agent,
+  AgentCreateProps,
   Agents,
   NewAgent,
   RegisteredAgentType,
@@ -31,6 +32,7 @@ import {
   BuilderlabLogoIcon,
   CodexLogoIcon,
 } from "../../shared/design-system/icons";
+import { Select } from "../../shared/design-system/ui/Select";
 
 vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   ...(await actual<typeof import("../../features/profiles/avatar-upload")>()),
@@ -185,6 +187,9 @@ const createButton = () => screen.getByRole("button", { name: "Create agent" });
 
 it("creates with the name, a pack picture and the config from the type's view", async () => {
   const { agents, onCreated, dialog, user } = setup([echo]);
+  expect(
+    within(dialog).queryByRole("combobox", { name: "Thinking" }),
+  ).toBeNull();
   await user.type(within(dialog).getByLabelText("Name"), "  Nova ");
 
   const grid = within(dialog).getByRole("group", { name: "Agent avatars" });
@@ -809,6 +814,124 @@ const withModels = (type: RegisteredAgentType): RegisteredAgentType => ({
       />
     );
   },
+});
+
+const withThinking = (type: RegisteredAgentType): RegisteredAgentType =>
+  ({
+    ...type,
+    defaults: () => ({
+      config: { notes: "start", instructions: "Be brief.", effort: "" },
+    }),
+    CreateThinking: ({ config, disabled, onChange }: AgentCreateProps) => {
+      const current = config as Record<string, unknown>;
+      return (
+        <Select
+          label="Thinking"
+          value={String(current.effort ?? "")}
+          variant="compact"
+          disabled={disabled}
+          groups={[
+            {
+              label: "",
+              options: [
+                { value: "", label: "Automatic · Default" },
+                { value: "low", label: "Low" },
+                { value: "high", label: "High" },
+              ],
+            },
+          ]}
+          onValueChange={(effort) => onChange({ ...current, effort })}
+        />
+      );
+    },
+  }) as unknown as RegisteredAgentType;
+
+it("saves the create-time Thinking choice in the initial agent config", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes)]);
+  const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Automatic · Default");
+
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(thinking);
+  const high = await screen.findByRole("option", { name: "High" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: "Automatic · Default" }),
+    ).toHaveFocus(),
+  );
+  await user.keyboard("{ArrowDown}{ArrowDown}");
+  expect(high).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await user.click(createButton());
+
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/notes",
+      config: { notes: "start", instructions: "Be brief.", effort: "high" },
+    }),
+  );
+});
+
+it("restores inherited Thinking when Default is chosen before creation", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes)]);
+  const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Automatic · Default");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+
+  await user.click(thinking);
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  expect(thinking).toHaveTextContent("High");
+  await user.click(thinking);
+  await user.click(
+    await screen.findByRole("option", { name: "Automatic · Default" }),
+  );
+  expect(thinking).toHaveTextContent("Automatic · Default");
+
+  await user.click(createButton());
+
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/notes",
+      config: { notes: "start", instructions: "Be brief.", effort: "" },
+    }),
+  );
+});
+
+it("drops the provider-specific Thinking choice when changing harnesses", async () => {
+  const { agents, dialog, user } = setup([withThinking(notes), echo]);
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(within(dialog).getByRole("combobox", { name: "Thinking" }));
+  await user.click(await screen.findByRole("option", { name: "High" }));
+
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Echo" }));
+  expect(
+    within(dialog).queryByRole("combobox", { name: "Thinking" }),
+  ).toBeNull();
+
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "test/echo", config: { reply: "" } }),
+  );
+});
+
+it("disables the Thinking control while creation is pending", async () => {
+  let finish: (agent: Agent) => void = () => {};
+  const { agents, dialog, user } = setup(
+    [withThinking(notes)],
+    () => new Promise<Agent>((resolve) => (finish = resolve)),
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+
+  try {
+    await user.click(createButton());
+    await waitFor(() => expect(agents.create).toHaveBeenCalledOnce());
+    expect(
+      within(dialog).getByRole("combobox", { name: "Thinking" }),
+    ).toBeDisabled();
+  } finally {
+    finish(made);
+  }
 });
 
 it("keeps typed instructions when choosing a harness or model", async () => {

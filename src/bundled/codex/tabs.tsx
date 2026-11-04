@@ -296,6 +296,35 @@ const codexDefaultEffortLabel = (effort: string, model?: Model) => {
   const resolved = effort || model?.defaultReasoningEffort;
   return resolved ? effortName(resolved) : "Automatic";
 };
+const thinkingOptions = (
+  effort: string,
+  effectiveEffort: string,
+  selected?: Model,
+  catalog?: Catalog,
+) => {
+  const supported = selected?.supportedReasoningEfforts ?? [];
+  return [
+    {
+      value: "",
+      label: `${codexDefaultEffortLabel(effectiveEffort, selected)} · Default`,
+    },
+    ...(effort &&
+    !supported.some((candidate) => candidate.reasoningEffort === effort)
+      ? [
+          {
+            value: effort,
+            label: catalog
+              ? `${effortName(effort)} (unavailable)`
+              : effortName(effort),
+          },
+        ]
+      : []),
+    ...supported.map((candidate) => ({
+      value: candidate.reasoningEffort,
+      label: effortName(candidate.reasoningEffort),
+    })),
+  ];
+};
 /** A model's choice also resets the effort to that model's default. */
 const modelChange = (model: string, data?: Catalog) => ({
   model,
@@ -499,6 +528,49 @@ export function createTabs(
           }
         />
       </div>
+    );
+  }
+
+  function CreateThinking({
+    config,
+    onChange,
+    disabled,
+  }: AgentCreateProps<Config>) {
+    const current = readConfig(config);
+    const { data, checking } = useProvider();
+    const { effort } = current;
+    const effective = provider.resolve({ ...current, effort: "" });
+    const selected = catalogModel(effective.model, data);
+    useEffect(() => {
+      if (disabled || checking || !data || !effort || !selected) return;
+      if (
+        !selected.supportedReasoningEfforts.some(
+          (choice) => choice.reasoningEffort === effort,
+        )
+      )
+        onChange(readConfig({ ...config, effort: "" }));
+    }, [checking, config, data, disabled, effort, onChange, selected]);
+    const efforts = thinkingOptions(
+      current.effort,
+      effective.effort,
+      selected,
+      data,
+    );
+    return (
+      <Select
+        label="Thinking"
+        valueLabel={
+          current.effort
+            ? undefined
+            : codexDefaultEffortLabel(effective.effort, selected)
+        }
+        valueSuffix={current.effort ? undefined : " · Default"}
+        variant="compact"
+        value={current.effort}
+        groups={[{ label: "", options: efforts }]}
+        disabled={disabled || checking || !selected}
+        onValueChange={(effort) => onChange(readConfig({ ...current, effort }))}
+      />
     );
   }
 
@@ -997,26 +1069,12 @@ export function createTabs(
     }, [agent.config]);
     const effective = provider.resolve({ ...draft, effort: "" });
     const selected = catalogModel(effective.model, data);
-    const supported = selected?.supportedReasoningEfforts ?? [];
-    const efforts = [
-      {
-        value: "",
-        label: `${codexDefaultEffortLabel(effective.effort, selected)} · Default`,
-      },
-      ...(draft.effort &&
-      !supported.some((effort) => effort.reasoningEffort === draft.effort)
-        ? [
-            {
-              value: draft.effort,
-              label: `${effortName(draft.effort)} (unavailable)`,
-            },
-          ]
-        : []),
-      ...supported.map((effort) => ({
-        value: effort.reasoningEffort,
-        label: effortName(effort.reasoningEffort),
-      })),
-    ];
+    const efforts = thinkingOptions(
+      draft.effort,
+      effective.effort,
+      selected,
+      data,
+    );
     const configChanged = JSON.stringify(draft) !== JSON.stringify(saved);
     const changed = configChanged || Boolean(settingsHost?.pendingSave);
     const submit = async () => {
@@ -1050,37 +1108,33 @@ export function createTabs(
             </Button>
           </div>
         )}
-        <>
-          <ModelPicker
-            allowCustomModel={false}
-            models={choices(data)}
-            value={draft.model}
-            defaultModel={
-              catalogModel(providerDefaults.model, data)?.model ?? ""
-            }
-            defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
-            defaultDescription="Following the provider's model default"
-            loading={checking}
-            disabled={saving}
-            onChange={(model) =>
-              setDraft({ ...draft, ...modelChange(model, data) })
-            }
-          />
-          <Select
-            label="Thinking"
-            valueLabel={
-              draft.effort
-                ? undefined
-                : codexDefaultEffortLabel(effective.effort, selected)
-            }
-            valueSuffix={draft.effort ? undefined : " · Default"}
-            variant="preference"
-            value={draft.effort}
-            groups={[{ label: "", options: efforts }]}
-            disabled={checking || saving || !selected}
-            onValueChange={(effort) => setDraft({ ...draft, effort })}
-          />
-        </>
+        <ModelPicker
+          allowCustomModel={false}
+          models={choices(data)}
+          value={draft.model}
+          defaultModel={catalogModel(providerDefaults.model, data)?.model ?? ""}
+          defaultLabel={providerDefaultLabel(providerDefaults.model, data)}
+          defaultDescription="Following the provider's model default"
+          loading={checking}
+          disabled={saving}
+          onChange={(model) =>
+            setDraft({ ...draft, ...modelChange(model, data) })
+          }
+        />
+        <Select
+          label="Thinking"
+          valueLabel={
+            draft.effort
+              ? undefined
+              : codexDefaultEffortLabel(effective.effort, selected)
+          }
+          valueSuffix={draft.effort ? undefined : " · Default"}
+          variant="preference"
+          value={draft.effort}
+          groups={[{ label: "", options: efforts }]}
+          disabled={checking || saving || !selected}
+          onValueChange={(effort) => setDraft({ ...draft, effort })}
+        />
       </>
     );
     return (
@@ -1151,6 +1205,7 @@ export function createTabs(
 
   return {
     CreateModel,
+    CreateThinking,
     Create,
     ProviderDialogBody,
     DefaultControl,

@@ -256,7 +256,9 @@ available rather than silently discarding it.
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
   offers the same edit. Model, workspace, and other runtime options depend on
-  its type. Do not assume someone can edit another person's agent.
+  its type. Where offered, **Create agent** also lets people choose Thinking
+  before the first config is saved; **Default** follows the provider's setting.
+  Do not assume someone can edit another person's agent.
 - An agent's name and picture identify it. Instructions shape its response
   style, tasks, initiative, and boundaries. They do not add tools, credentials,
   or permissions. Saving instructions affects future work, not past messages.
