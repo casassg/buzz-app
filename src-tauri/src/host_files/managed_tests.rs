@@ -1454,7 +1454,16 @@ fn host_release_deadline_starts_before_first_poll_and_cancelled_queue_never_unli
             } else {
                 tokio::time::pause();
                 tokio::time::advance(SAVE_WINDOW + std::time::Duration::from_secs(1)).await;
-                cleanup.await; // No first-poll reset of the captured budget.
+                // An expired attempt must finish on its first poll, without
+                // letting paused time auto-advance through a reset deadline.
+                let mut cleanup = Box::pin(cleanup);
+                assert!(
+                    matches!(
+                        futures_util::poll!(&mut cleanup),
+                        std::task::Poll::Ready(())
+                    ),
+                    "expired cleanup must return immediately without a fresh budget"
+                );
                 tokio::time::resume();
             }
             assert_eq!(BYTE_WAITERS.available_permits(), 16);
