@@ -12,7 +12,10 @@ import {
 import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
-import type { DecisionsService } from "../features/decisions/service";
+import type {
+  DecisionsService,
+  RegisteredProvider,
+} from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -232,6 +235,8 @@ function PluginProvenance({
 
 const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
+const noProviders: readonly RegisteredProvider[] = [];
+const noDecisionProviders = () => noProviders;
 
 function restrictedPlugin(plugin: PluginInfo) {
   return (
@@ -537,7 +542,12 @@ function PluginDetails({
         />
       )}
       {sections.length > 0 && (
-        <p className="m-0 text-body-sm text-secondary">
+        // biome-ignore lint/a11y/useSemanticElements: This names links to Settings sections, not a fieldset of form controls.
+        <p
+          role="group"
+          aria-label={`${plugin.manifest.name} settings`}
+          className="m-0 text-body-sm text-secondary"
+        >
           Settings:{" "}
           {sections.map((section, index) => (
             <Fragment key={section.id}>
@@ -715,6 +725,10 @@ export function Settings({
       : moderationAccess;
   useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
+  const decisionProviders = useSyncExternalStore(
+    decisions?.subscribe ?? noAccessSubscription,
+    decisions?.providers ?? noDecisionProviders,
+  );
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -968,15 +982,20 @@ export function Settings({
         ? selectedRunning.error
         : null))
     : null;
-  // Only what the sidebar shows now: an inactive plugin registers no cards,
-  // and community sections need a selected community.
+  // Only what the sidebar shows now: an inactive plugin registers no cards or
+  // providers, and community sections need a selected community. A decision
+  // provider's settings are under Decisions API.
   const selectedSections = selectedPlugin
     ? sections.filter((section) =>
-        contributed.some(
-          (card) =>
-            card.key === section.id &&
-            card.pluginId === selectedPlugin.manifest.id,
-        ),
+        section.id === "decisions"
+          ? decisionProviders.some(
+              (provider) => provider.pluginId === selectedPlugin.manifest.id,
+            )
+          : contributed.some(
+              (card) =>
+                card.key === section.id &&
+                card.pluginId === selectedPlugin.manifest.id,
+            ),
       )
     : [];
   const renderPluginGroup = (

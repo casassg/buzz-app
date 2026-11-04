@@ -1236,18 +1236,10 @@ it("opens Manage plugins from the Decisions API hint", async () => {
   expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
 
-it("links a plugin's details to the Settings sections it adds", async () => {
-  const user = userEvent.setup();
-  const owned = (id: string, title: string, group?: string) => ({
-    ...card(id, title, group),
-    key: `buzz.github/${id}`,
-    pluginId: "buzz.github",
-  });
-  const { cards } = registry([
-    owned("authors", "GitHub comment authors", "Plugins"),
-    owned("reviews", "GitHub reviews"),
-    card("groups", "Personal groups"),
-  ]);
+function pluginSectionsFixture(
+  cards: SettingsCards,
+  decisions?: DecisionsService,
+) {
   const plugin = (id: string, name: string) => ({
     manifest: { id, name, apiVersion: 1 as const },
     source: "bundled" as const,
@@ -1267,6 +1259,7 @@ it("links a plugin's details to the Settings sections it adds", async () => {
         plugins: [
           plugin("buzz.github", "GitHub"),
           plugin("buzz.codex", "Codex"),
+          plugin("buzz.typesafe", "TypeSafe"),
         ],
       },
     },
@@ -1282,12 +1275,6 @@ it("links a plugin's details to the Settings sections it adds", async () => {
     reload: vi.fn(),
     dismissError: vi.fn(),
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
-  const noCommunityState = { ...communityState, selected: null };
-  const personal = {
-    retainPresentation: () => () => {},
-    subscribe: () => () => {},
-    snapshot: () => noCommunityState,
-  } as unknown as Parameters<typeof Settings>[0]["communities"];
   const onSection = vi.fn();
   const view = (section: string, communities = host.communities) => (
     <div id="settings-content" tabIndex={-1}>
@@ -1296,6 +1283,7 @@ it("links a plugin's details to the Settings sections it adds", async () => {
         communities={communities}
         cards={cards}
         plugins={plugins}
+        decisions={decisions}
         navigation={
           {
             target: { version: 1, kind: "settings", section },
@@ -1307,31 +1295,63 @@ it("links a plugin's details to the Settings sections it adds", async () => {
       />
     </div>
   );
-  const settingsLine = (name: string) =>
+  /** The named link line in a plugin's open details, or null without one. */
+  const links = (name: string) =>
     within(
       screen.getByRole("complementary", { name: `${name} details` }),
-    ).queryByText(/^Settings:/);
+    ).queryByRole("group", { name: `${name} settings` });
+  const linkNames = (name: string) =>
+    within(links(name) as HTMLElement)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+  return { onSection, view, links, linkNames };
+}
+
+it("links a plugin's details to the Settings sections it adds", async () => {
+  const user = userEvent.setup();
+  const owned = (id: string, title: string, group?: string) => ({
+    ...card(id, title, group),
+    key: `buzz.github/${id}`,
+    pluginId: "buzz.github",
+  });
+  const all = [
+    owned("authors", "GitHub comment authors", "Plugins"),
+    owned("reviews", "GitHub reviews"),
+    card("groups", "Personal groups"),
+  ];
+  const { cards, set } = registry(all);
+  const { onSection, view, links, linkNames } = pluginSectionsFixture(cards);
+  const noCommunityState = { ...communityState, selected: null };
+  const personal = {
+    retainPresentation: () => () => {},
+    subscribe: () => () => {},
+    snapshot: () => noCommunityState,
+  } as unknown as Parameters<typeof Settings>[0]["communities"];
 
   const { rerender } = render(view("plugins"));
   fireEvent.click(screen.getByRole("button", { name: "View Codex details" }));
-  expect(settingsLine("Codex")).toBeNull();
+  expect(links("Codex")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "View GitHub details" }));
-  const line = settingsLine("GitHub");
-  expect(line).toHaveTextContent(
+  expect(links("GitHub")).toHaveTextContent(
     "Settings: GitHub reviews, GitHub comment authors",
   );
+  expect(linkNames("GitHub")).toEqual([
+    "GitHub reviews",
+    "GitHub comment authors",
+  ]);
+
+  // Disabling a plugin retires its cards; its details stay open without links.
+  act(() => set([card("groups", "Personal groups")]));
+  expect(links("GitHub")).toBeNull();
   expect(
-    within(line as HTMLElement)
-      .getAllByRole("button")
-      .map((button) => button.textContent),
-  ).toEqual(["GitHub reviews", "GitHub comment authors"]);
+    screen.getByRole("complementary", { name: "GitHub details" }),
+  ).toBeVisible();
+  act(() => set(all));
 
   // Personal space has no community, so its community card is not linked.
   rerender(view("plugins", personal));
-  expect(settingsLine("GitHub")).toHaveTextContent(
-    /^Settings: GitHub comment authors$/,
-  );
+  expect(linkNames("GitHub")).toEqual(["GitHub comment authors"]);
 
   await user.click(
     screen.getByRole("button", { name: "GitHub comment authors" }),
@@ -1344,6 +1364,71 @@ it("links a plugin's details to the Settings sections it adds", async () => {
     screen.queryByRole("complementary", { name: "GitHub details" }),
   ).toBeNull();
   expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
+it("links a decision provider's details to Decisions API", async () => {
+  const user = userEvent.setup();
+  const provider = (pluginId: string, id: string) => ({
+    id,
+    key: `${pluginId}/${id}`,
+    pluginId,
+    revision: "bundled",
+    label: id,
+    description: `${id} provider`,
+    status: () => "ready" as const,
+    subscribe: () => () => {},
+    decide: vi.fn(),
+  });
+  const providers = [
+    provider("buzz.typesafe", "typesafe"),
+    provider("buzz.typesafe", "typesafe-fast"),
+    provider("buzz.github", "github"),
+  ];
+  const decisions = {
+    backend: () => undefined,
+    providers: () => providers,
+    subscribe: () => () => {},
+    setBackend: vi.fn(),
+  } as unknown as DecisionsService;
+  const { cards } = registry([
+    {
+      ...card("authors", "GitHub comment authors", "Plugins"),
+      key: "buzz.github/authors",
+      pluginId: "buzz.github",
+    },
+    {
+      ...card("reviews", "GitHub reviews"),
+      key: "buzz.github/reviews",
+      pluginId: "buzz.github",
+    },
+  ]);
+  const { onSection, view, links, linkNames } = pluginSectionsFixture(
+    cards,
+    decisions,
+  );
+  render(view("plugins"));
+
+  fireEvent.click(screen.getByRole("button", { name: "View Codex details" }));
+  expect(links("Codex")).toBeNull();
+  // Decisions API takes its sidebar place among the plugin's own sections.
+  fireEvent.click(screen.getByRole("button", { name: "View GitHub details" }));
+  expect(linkNames("GitHub")).toEqual([
+    "GitHub reviews",
+    "Decisions API",
+    "GitHub comment authors",
+  ]);
+  // Two providers from one plugin still make one link.
+  fireEvent.click(
+    screen.getByRole("button", { name: "View TypeSafe details" }),
+  );
+  expect(linkNames("TypeSafe")).toEqual(["Decisions API"]);
+
+  await user.click(
+    within(links("TypeSafe") as HTMLElement).getByRole("button", {
+      name: "Decisions API",
+    }),
+  );
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("decisions");
 });
 
 it("gives contributed cards their own community sections and retires removed cards", async () => {
