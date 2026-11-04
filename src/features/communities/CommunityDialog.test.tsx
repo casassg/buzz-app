@@ -415,7 +415,7 @@ it("keeps join unavailable after native identity hydration, but still saves a lo
   }
 });
 
-it.each(["", "not-a-relay"])(
+it.each(["", "not a relay"])(
   "shows inline relay validation for %j without contacting a relay",
   async (value) => {
     const user = userEvent.setup();
@@ -439,15 +439,59 @@ it.each(["", "not-a-relay"])(
     if (value) await user.type(input, value);
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Enter a wss:// or https:// relay URL",
+      "Enter a community address or invite link.",
     );
     expect(input).toHaveAttribute("aria-invalid", "true");
     expect(input).toHaveAccessibleDescription(
-      /Enter a wss:\/\/ or https:\/\/ relay URL/,
+      /Enter a community address or invite link\./,
     );
     expect(fetch).not.toHaveBeenCalled();
     await user.clear(input);
     await user.type(input, "wss://relay.example");
+    expect(screen.queryByRole("alert")).toBeNull();
+  },
+);
+
+it.each([
+  ["an invite link", "https://Relay.Example/invite/v2.abc", "v2.abc"],
+  ["a bare host", "relay.example", undefined],
+])(
+  "looks up the community for %s and prefills only an invite link's code",
+  async (_, value, code) => {
+    const user = userEvent.setup();
+    const requests = vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: false });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", requests);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "", picture: "" },
+      }),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        mode="join"
+        close={() => {}}
+      />,
+    );
+    await user.click(screen.getByLabelText("Community URL"));
+    await user.paste(value);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    // The access step names the canonical origin the lookup went to.
+    expect(await screen.findByText("https://relay.example")).toBeVisible();
+    expect(requests).toHaveBeenCalledWith(
+      `/api/relay/${encodeURIComponent("https://relay.example")}/info`,
+      expect.anything(),
+    );
+    if (code) expect(screen.getByLabelText("Invite code")).toHaveValue(code);
+    else expect(screen.queryByLabelText("Invite code")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   },
 );

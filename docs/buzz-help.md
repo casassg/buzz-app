@@ -59,7 +59,9 @@ the interface unless an available tool actually supports that action.
   **Settings → Buzz → Identity → Organization sign-in**.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
-  more than one community.
+  more than one community. To add another, choose **Join a community** in the
+  community picker and paste an invite link or type an address such as
+  `relay.example.com`; an invite link fills in its invite code.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile.
 - Where a community verifies names, the profile check appears beside the verified

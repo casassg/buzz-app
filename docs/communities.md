@@ -23,12 +23,16 @@ no community saved, the picker is labeled **Communities**; otherwise it shows th
 selected community's icon or the Personal space globe. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
-Buzz-compatible community relays. No community is pre-joined; a packaged build
-that sets [`BUZZ_DEFAULT_COMMUNITY_URL`](configuration.md) only preselects one.
+Buzz-compatible community relays; a bare host such as `relay.example.com` is
+read as `wss://`. The relay's invite link, `https://<host>/invite/<code>`, is
+looked up at its origin and its code fills **Invite code**. The no-community
+landing reads its field the same way. No community is pre-joined; a packaged
+build that sets [`BUZZ_DEFAULT_COMMUNITY_URL`](configuration.md) only preselects
+one.
 
 Surrounding whitespace, host case, a final DNS dot, default port 443 and a single
 root slash normalize to the same HTTPS origin. Non-default ports are preserved.
-Credentials, insecure schemes, non-root paths, query and fragment are rejected,
+Credentials, insecure schemes, other paths, query and fragment are rejected,
 not silently stripped. Continue starts discovery and authenticated profile reads;
 typing does not contact a relay. The canonical origin stays visible before policy
 acceptance or profile publication. Failed setup keeps the typed input and current

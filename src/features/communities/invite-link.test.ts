@@ -79,13 +79,29 @@ it.each([
     { community: "https://relay.example", code: "v2.invite" },
   ],
   ["wss://relay.example", { community: "https://relay.example", code: "" }],
+  // A typed address may omit its scheme, as in the native first-run field.
+  ["relay.example", { community: "https://relay.example", code: "" }],
+  [
+    " Relay.Example.com:8443 ",
+    { community: "https://relay.example.com:8443", code: "" },
+  ],
+  ["localhost:3000", { community: "https://localhost:3000", code: "" }],
+  // A bare invite code with a dot reads as a host, so it fails at lookup.
+  ["v2.invite", { community: "https://v2.invite", code: "" }],
 ])("reads a pasted invite or address: %s", (input, expected) => {
   expect(parsePastedInvite(input)).toEqual(expected);
 });
 
 it.each([
   "",
-  "v2.invite",
+  "not a relay",
+  "ws://relay.example",
+  "http://relay.example",
+  "wss://user:pass@relay.example",
+  "user@relay.example",
+  "relay.example/invite/x",
+  "relay.example?x=1",
+  "relay.example#x",
   "http://relay.example/invite/x",
   "https://user@relay.example/invite/x",
   "https://relay.example/invite/x?redirect=evil",

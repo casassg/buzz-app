@@ -9,7 +9,8 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { communityRequest, inspectProfile, type CommunityInfo } from "./api";
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
-import { communityDestination, relayOrigin } from "./destination";
+import { communityDestination } from "./destination";
+import { parsePastedInvite } from "./invite-link";
 import { nativeIdentityEnabled } from "../identity/service";
 import { readErrorKind } from "../relay/errors";
 import { createJoinJournal, type PendingJoin } from "./join-journal";
@@ -161,7 +162,15 @@ export function CommunityDialog({
     if (uploading || unavailable) return;
     if (step === "destination") {
       await work(async () => {
-        const next = communityDestination(relayOrigin(url));
+        const entered = parsePastedInvite(url);
+        if (!entered)
+          throw new Error("Enter a community address or invite link.");
+        const next = communityDestination(entered.community);
+        // A pasted invite link carries its code the way an opened invite does.
+        if (entered.code) {
+          setCode(entered.code);
+          setNeedsInvite(true);
+        }
         setDestination(next);
         const value = await communityRequest<CommunityInfo>(next.id, "info");
         if (!mounted.current) return;

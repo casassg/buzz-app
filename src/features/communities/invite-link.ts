@@ -1,4 +1,4 @@
-import { communityDestination } from "./destination";
+import { communityDestination, enteredRelayOrigin } from "./destination";
 
 export type InviteLink = Readonly<{
   community: string;
@@ -46,7 +46,9 @@ export function parseInviteLink(input: string): InviteLink | null {
   }
 }
 
-/** A pasted invite: the app link, the relay's invite page, or a bare community address. */
+/** Typed or pasted community input: the app link, the relay's invite page, or
+ * a community address, where a bare host is a secure relay. A typed address
+ * never resolves an alias. */
 export function parsePastedInvite(input: string): InviteLink | null {
   const value = input.trim();
   if (value.length > 4096) return null;
@@ -67,10 +69,10 @@ export function parsePastedInvite(input: string): InviteLink | null {
         : null;
     }
   } catch {
-    // Not a URL; a bare address still fails closed below.
+    // Not a URL; a bare host is read as wss:// below.
   }
   try {
-    return { community: communityDestination(value).url, code: "" };
+    return { community: enteredRelayOrigin(value), code: "" };
   } catch {
     return null;
   }
