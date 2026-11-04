@@ -30,6 +30,7 @@ import { Tabs } from "../shared/design-system/ui/Tabs";
 import { SearchField } from "../shared/design-system/ui/SearchField";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import {
+  Fragment,
   type ReactNode,
   forwardRef,
   type RefObject,
@@ -79,7 +80,12 @@ import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
 import { UpdateSettings } from "../features/updates/UpdateSettings";
 import { CommunityDepartureSettings } from "./CommunityDepartureSettings";
-import { developerMode, settingsSections } from "./settings-sections";
+import {
+  developerMode,
+  settingsSections,
+  type SettingsSection,
+} from "./settings-sections";
+import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
 
@@ -302,6 +308,8 @@ function PluginDetails({
   onReviewHandled,
   initialUpdateAvailable,
   holdReview,
+  sections,
+  openSection,
 }: {
   plugin: PluginInfo;
   managed?: ReturnType<typeof managedBy>;
@@ -321,6 +329,8 @@ function PluginDetails({
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
   holdReview: (() => () => void) | undefined;
+  sections: readonly SettingsSection[];
+  openSection: ((section: string) => void) | undefined;
 }) {
   const accessReason = restrictedPlugin(plugin)
     ? accessMessage(plugin, access)
@@ -525,6 +535,19 @@ function PluginDetails({
           busy={busy}
           {...(authorizeGit ? { authorizeGit } : {})}
         />
+      )}
+      {sections.length > 0 && (
+        <p className="m-0 text-body-sm text-secondary">
+          Settings:{" "}
+          {sections.map((section, index) => (
+            <Fragment key={section.id}>
+              {index > 0 && ", "}
+              <SettingsSectionLink section={section.id} open={openSection}>
+                {section.label}
+              </SettingsSectionLink>
+            </Fragment>
+          ))}
+        </p>
       )}
       {accessReason && (
         <p id="plugin-detail-access" className="sr-only">
@@ -731,6 +754,12 @@ export function Settings({
         )
     )?.focus({ preventScroll: true });
   }, [selected, navigationPane]);
+  const openSection =
+    onSection &&
+    ((id: string) => {
+      contentFocus.current = id;
+      onSection(id);
+    });
   useEffect(() => {
     if (
       departure &&
@@ -939,6 +968,17 @@ export function Settings({
         ? selectedRunning.error
         : null))
     : null;
+  // Only what the sidebar shows now: an inactive plugin registers no cards,
+  // and community sections need a selected community.
+  const selectedSections = selectedPlugin
+    ? sections.filter((section) =>
+        contributed.some(
+          (card) =>
+            card.key === section.id &&
+            card.pluginId === selectedPlugin.manifest.id,
+        ),
+      )
+    : [];
   const renderPluginGroup = (
     group: ReturnType<typeof groupPlugins>[number],
   ) => {
@@ -1261,13 +1301,7 @@ export function Settings({
             <DecisionsSettings
               decisions={decisions}
               active={() => selected === "decisions"}
-              onSection={
-                onSection &&
-                ((id) => {
-                  contentFocus.current = id;
-                  onSection(id);
-                })
-              }
+              onSection={openSection}
             />
           </div>
         )}
@@ -1580,6 +1614,8 @@ export function Settings({
           onToggle={() => togglePlugin(selectedPlugin)}
           close={detailsClose}
           onClose={closePluginDetails}
+          sections={selectedSections}
+          openSection={openSection}
         />
       )}
     </>

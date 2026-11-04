@@ -291,6 +291,8 @@ available rather than silently discarding it.
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+- A plugin's details in Manage plugins link to any Settings sections it adds
+  that are currently shown, such as GitHub comment authors.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
   helper Buzz installs, for example

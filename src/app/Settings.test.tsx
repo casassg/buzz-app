@@ -1236,6 +1236,116 @@ it("opens Manage plugins from the Decisions API hint", async () => {
   expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
 
+it("links a plugin's details to the Settings sections it adds", async () => {
+  const user = userEvent.setup();
+  const owned = (id: string, title: string, group?: string) => ({
+    ...card(id, title, group),
+    key: `buzz.github/${id}`,
+    pluginId: "buzz.github",
+  });
+  const { cards } = registry([
+    owned("authors", "GitHub comment authors", "Plugins"),
+    owned("reviews", "GitHub reviews"),
+    card("groups", "Personal groups"),
+  ]);
+  const plugin = (id: string, name: string) => ({
+    manifest: { id, name, apiVersion: 1 as const },
+    source: "bundled" as const,
+    enabled: true,
+    revision: "bundled",
+    previous: null,
+    reloadable: false,
+    error: null,
+  });
+  const snapshot = {
+    configuration: {
+      status: "ready" as const,
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "test",
+        location: "test",
+        plugins: [
+          plugin("buzz.github", "GitHub"),
+          plugin("buzz.codex", "Codex"),
+        ],
+      },
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  const plugins = {
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    change: vi.fn(),
+    reload: vi.fn(),
+    dismissError: vi.fn(),
+  } as unknown as Parameters<typeof Settings>[0]["plugins"];
+  const noCommunityState = { ...communityState, selected: null };
+  const personal = {
+    retainPresentation: () => () => {},
+    subscribe: () => () => {},
+    snapshot: () => noCommunityState,
+  } as unknown as Parameters<typeof Settings>[0]["communities"];
+  const onSection = vi.fn();
+  const view = (section: string, communities = host.communities) => (
+    <div id="settings-content" tabIndex={-1}>
+      <Settings
+        {...host}
+        communities={communities}
+        cards={cards}
+        plugins={plugins}
+        navigation={
+          {
+            target: { version: 1, kind: "settings", section },
+            complete: () => true,
+          } as never
+        }
+        onSection={onSection}
+        navigationPane
+      />
+    </div>
+  );
+  const settingsLine = (name: string) =>
+    within(
+      screen.getByRole("complementary", { name: `${name} details` }),
+    ).queryByText(/^Settings:/);
+
+  const { rerender } = render(view("plugins"));
+  fireEvent.click(screen.getByRole("button", { name: "View Codex details" }));
+  expect(settingsLine("Codex")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "View GitHub details" }));
+  const line = settingsLine("GitHub");
+  expect(line).toHaveTextContent(
+    "Settings: GitHub reviews, GitHub comment authors",
+  );
+  expect(
+    within(line as HTMLElement)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["GitHub reviews", "GitHub comment authors"]);
+
+  // Personal space has no community, so its community card is not linked.
+  rerender(view("plugins", personal));
+  expect(settingsLine("GitHub")).toHaveTextContent(
+    /^Settings: GitHub comment authors$/,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: "GitHub comment authors" }),
+  );
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("buzz.github/authors");
+  // Opening the section removes the pane, so focus moves into the section.
+  rerender(view("buzz.github/authors", personal));
+  expect(screen.getByText("GitHub comment authors body")).toBeVisible();
+  expect(
+    screen.queryByRole("complementary", { name: "GitHub details" }),
+  ).toBeNull();
+  expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
 it("gives contributed cards their own community sections and retires removed cards", async () => {
   const { cards, set } = registry([
     card("hosted", "Hosted communities", "Communities"),
