@@ -1432,11 +1432,13 @@ it("links a decision provider's details to Decisions API", async () => {
 });
 
 it.each([
-  { start: "hidden", top: -1100, scrolled: true },
-  { start: "in view", top: 260, scrolled: false },
+  { start: "hidden", via: "link", top: -1100, scrolled: true },
+  { start: "in view", via: "link", top: 260, scrolled: false },
+  // A route change, such as Back or a sidebar click, keeps its own scrolling.
+  { start: "hidden", via: "route", top: -1100, scrolled: false },
 ])(
-  "brings a linked section's start into view only when it is hidden (start $start)",
-  async ({ top, scrolled }) => {
+  "brings a section's start into view only when a link opens it hidden (start $start, via $via)",
+  async ({ via, top, scrolled }) => {
     const user = userEvent.setup();
     const { cards } = registry([
       {
@@ -1457,11 +1459,12 @@ it.each([
     fireEvent.click(
       screen.getByRole("button", { name: "View GitHub details" }),
     );
-    await user.click(
-      within(links("GitHub") as HTMLElement).getByRole("button", {
-        name: "GitHub comment authors",
-      }),
-    );
+    if (via === "link")
+      await user.click(
+        within(links("GitHub") as HTMLElement).getByRole("button", {
+          name: "GitHub comment authors",
+        }),
+      );
     const content = document.getElementById("settings-content") as HTMLElement;
     const scrollIntoView = vi.fn();
     content.scrollIntoView = scrollIntoView;
@@ -1476,7 +1479,7 @@ it.each([
 
     rerender(stacked("buzz.github/authors"));
     expect(screen.getByText("GitHub comment authors body")).toBeVisible();
-    expect(content).toHaveFocus();
+    if (via === "link") expect(content).toHaveFocus();
     if (scrolled)
       expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({
         block: "start",
