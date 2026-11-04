@@ -131,6 +131,21 @@ it("puts a session on the picked model and level, and skips what is already set"
     effort: "low",
   });
   expect(configured()).toHaveLength(2);
+
+  await OPENCODE.select?.(process, session, {
+    provider: "",
+    model: "anthropic/sonnet",
+    effort: "xhigh",
+  });
+  expect(configured()).toEqual([
+    "model=openai/gpt",
+    "effort=low",
+    "model=anthropic/sonnet",
+  ]);
+  expect(session.chosen).toMatchObject({
+    model: "anthropic/sonnet",
+    effort: "low",
+  });
 });
 
 it("lists the models and levels opencode offers, and kills the probe", async () => {

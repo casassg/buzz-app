@@ -2,7 +2,6 @@
 // thinking-level picks set as config options. Each session's Buzz tools reach
 // OpenCode over HTTP MCP, never a Buzz key.
 import { AcpProcess } from "../../features/agent-harness/acp/process";
-import type { ConfigOptions } from "../../features/agent-harness/acp/session";
 import { errorMessage } from "../../features/agent-harness/acp/steps";
 import type {
   AcpHooks,
@@ -35,15 +34,30 @@ export const OPENCODE: AcpHooks = {
     "opencode is not installed or not on your PATH. Install it, then run `opencode auth login`.",
   env: ENV,
   select: async (opencode, session, want) => {
+    let levels:
+      | { id: string | undefined; values: string[] | undefined }
+      | undefined;
     const configure = async (configId: string, value: string) => {
       try {
-        session.offer(
-          (await opencode.request("session/set_config_option", {
-            sessionId: session.id,
-            configId,
-            value,
-          })) as ConfigOptions,
+        const answer = (await opencode.request("session/set_config_option", {
+          sessionId: session.id,
+          configId,
+          value,
+        })) as {
+          configOptions?: {
+            id?: string;
+            category?: string | null;
+            options?: { value: string }[];
+          }[];
+        };
+        session.offer(answer);
+        const option = answer.configOptions?.find(
+          (item) => item.category === "thought_level",
         );
+        levels = option && {
+          id: option.id,
+          values: option.options?.map(({ value }) => value),
+        };
       } catch (error) {
         throw new Error(
           `opencode could not switch its ${configId} to ${value}: ${errorMessage(error)}`,
@@ -55,7 +69,8 @@ export const OPENCODE: AcpHooks = {
       session.chosen = { ...session.chosen, model: want.model };
     }
     if (want.effort && want.effort !== session.chosen.effort) {
-      await configure("effort", want.effort);
+      if (levels?.values && !levels.values.includes(want.effort)) return;
+      await configure(levels?.id ?? "effort", want.effort);
       session.chosen = { ...session.chosen, effort: want.effort };
     }
   },
