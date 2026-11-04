@@ -1,0 +1,15 @@
+{
+  "id": "buzz.opencode",
+  "name": "OpenCode",
+  "apiVersion": 1,
+  "description": "Run local OpenCode agents in Buzz.",
+  "discovery": {
+    "category": "agents",
+    "tags": ["code", "coding-agents"]
+  },
+  "host": {
+    "processes": [{ "id": "opencode", "program": "opencode", "args": ["acp"] }],
+    "mcp": true,
+    "files": true
+  }
+}

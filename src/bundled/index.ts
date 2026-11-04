@@ -32,6 +32,8 @@ import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
 import * as goose from "./goose";
+import opencodeManifest from "./opencode/manifest.json";
+import * as opencode from "./opencode";
 import piManifest from "./pi/manifest.json";
 import * as pi from "./pi";
 import channelsManifest from "./channels/manifest.json";
@@ -202,6 +204,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...opencodeManifest, apiVersion: 1 },
+    module: opencode,
+    enabledByDefault: false,
   },
   {
     manifest: { ...piManifest, apiVersion: 1 },
