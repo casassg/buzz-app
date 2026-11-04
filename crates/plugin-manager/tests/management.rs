@@ -1148,6 +1148,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             id,
             "buzz.bestie"
                 | "buzz.pi"
+                | "buzz.opencode"
                 | "buzz.todos"
                 | "buzz.usage"
                 | "buzz.relay-notes"
