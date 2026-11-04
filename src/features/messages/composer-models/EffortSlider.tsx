@@ -16,6 +16,7 @@ import styles from "../ComposerModels.module.css";
 export function EffortSlider({
   avatarSrc,
   name,
+  chatScoped,
   model,
   efforts,
   resting,
@@ -25,6 +26,7 @@ export function EffortSlider({
   thumb,
 }: {
   name: string;
+  chatScoped?: boolean;
   avatarSrc: string | undefined;
   model(level?: string): ReactNode;
   efforts: readonly Effort[];
@@ -60,10 +62,10 @@ export function EffortSlider({
   const known = set || own >= 0;
   const level = known ? (efforts[at]?.label ?? "") : "Default";
   // A tap on the thumb's resting stop changes no value, so commits pick too.
-  // The run's own effort is no pick.
+  // Next-run choices clear at the default; chat choices remain explicit.
   const choose = (next: number) => {
     const effort = efforts[next]?.id;
-    pick(effort === resting ? undefined : effort);
+    pick(!chatScoped && effort === resting ? undefined : effort);
   };
   return (
     <Slider.Root
@@ -125,7 +127,11 @@ export function EffortSlider({
                 "calc(var(--thumb-width) / 2 + var(--composer-effort-position) * (100% - var(--thumb-width)))",
             }}
             inputRef={thumb}
-            aria-label={`Effort for ${name}'s next run`}
+            aria-label={
+              chatScoped
+                ? `Effort for ${name} in this chat`
+                : `Effort for ${name}'s next run`
+            }
             getAriaValueText={() => level}
           >
             <span

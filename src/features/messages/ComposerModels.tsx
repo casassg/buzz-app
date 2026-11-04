@@ -22,6 +22,7 @@ import {
   AgentsContext,
   useSessionState,
   useMentionModels,
+  useAgentsSnapshot,
 } from "../agents/react";
 import type { MentionModelChoice } from "../agents/react";
 import type { SessionPlace, SessionControlAction } from "../agents/service";
@@ -62,8 +63,11 @@ export function ComposerModels({
   media,
   value,
   disabled,
+  resettable = false,
+  explicitOnly = false,
   onChange,
   onResolved,
+  onRetryInventory,
   startsThread,
   place,
 }: {
@@ -72,15 +76,22 @@ export function ComposerModels({
   media: Parameters<typeof avatarMedia>[1];
   value: DraftPicks;
   disabled: boolean;
-  onChange(value: DraftPicks): void;
-  onResolved(value: MentionPicks): void;
+  /** Solo chat picks are defaults for the chat until explicitly reset. */
+  resettable?: boolean;
+  /** A new Solo chat keeps provider defaults unchanged unless picked. */
+  explicitOnly?: boolean;
+  onChange(value: DraftPicks, resetPubkeys?: readonly string[]): void;
+  /** null waits for choices; undefined invalidates the picker's snapshot. */
+  onResolved(value: MentionPicks | null | undefined, error?: string): void;
+  onRetryInventory?(): void;
   /** The message starts a thread of its own, as a channel's top-level one
    * does, so a thread-scoped agent has no session to act on. */
   startsThread: boolean;
   place: SessionPlace;
 }) {
   const [open, setOpen] = useState(false);
-  const mentioned = useMentionModels(pubkeys);
+  const [retry, setRetry] = useState(0);
+  const mentioned = useMentionModels(pubkeys, retry);
   const choices = useMemo<readonly MentionModelChoice[]>(
     () =>
       startsThread
@@ -88,6 +99,7 @@ export function ComposerModels({
             if (choice.session !== "thread") return [choice];
             const { session: _, ...rest } = choice;
             return rest.loading ||
+              rest.failed ||
               rest.models.length > 1 ||
               rest.models.some((model) => model.efforts.length)
               ? [rest]
@@ -114,6 +126,32 @@ export function ComposerModels({
     selection.snapshot,
   );
   const agents = useContext(AgentsContext);
+  const agentSnapshot = useAgentsSnapshot(agents);
+  const unavailableType =
+    resettable &&
+    pubkeys.some((pubkey) => {
+      const agent = agentSnapshot?.agents.find(
+        (item) => item.pubkey === pubkey,
+      );
+      return (
+        (value[pubkey]?.model || value[pubkey]?.effort) &&
+        agent &&
+        !agents?.types().some((type) => type.key === agent.type)
+      );
+    });
+  const unresolvedInventory =
+    unavailableType ||
+    (resettable &&
+      (agentSnapshot?.status === "loading" ||
+        agentSnapshot?.status === "error") &&
+      pubkeys.some(
+        (pubkey) =>
+          (value[pubkey]?.model || value[pubkey]?.effort) &&
+          !agentSnapshot.agents.some((agent) => agent.pubkey === pubkey),
+      ));
+  const inventoryFailed =
+    unavailableType ||
+    (unresolvedInventory && agentSnapshot?.status === "error");
   // A pick keeps the type it was made under: a retype drops it, even while
   // the new type's choices load or once they fail to, as none showed it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `mentioned` follows the agents' snapshot, so a retype reruns this.
@@ -131,37 +169,86 @@ export function ComposerModels({
   // Publish the displayed defaults separately from the user's draft picks.
   // A settings refresh or model-only pick must still follow the new default.
   useLayoutEffect(() => {
-    const resolved: Record<string, RunPick> = Object.fromEntries(
-      Object.entries(value).map(([pubkey, { model, effort }]) => [
-        pubkey,
-        { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
-      ]),
-    );
+    const waitingForSavedChoices =
+      resettable &&
+      (unresolvedInventory ||
+        choices.some(
+          (choice) =>
+            (choice.loading || choice.failed) &&
+            (value[choice.pubkey]?.model || value[choice.pubkey]?.effort),
+        ));
+    if (waitingForSavedChoices) {
+      onResolved(
+        null,
+        inventoryFailed || choices.some((choice) => choice.failed)
+          ? "Saved model and effort choices could not be loaded. Open model and effort controls to retry or reset them."
+          : undefined,
+      );
+      return () => onResolved(undefined);
+    }
+    const resolved: Record<string, RunPick> = resettable
+      ? {}
+      : Object.fromEntries(
+          Object.entries(value).map(([pubkey, { model, effort }]) => [
+            pubkey,
+            { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+          ]),
+        );
     for (const choice of choices) {
-      if (choice.loading || !choice.sendDefaults) continue;
+      if (choice.loading || choice.failed) continue;
       const saved = value[choice.pubkey] ?? {};
+      const selected = choice.models.find((item) => item.id === saved.model);
       const runs = runModel(choice, saved.model);
-      if (!runs.id) continue;
-      const effort = runs.efforts.some((item) => item.id === saved.effort)
-        ? saved.effort
-        : runs.efforts.some((item) => item.id === runs.effort)
+      if (!runs?.id) continue;
+      const explicitEffort = runs.efforts.find(
+        (item) =>
+          item.id === saved.effort &&
+          (!resettable || !saved.model || selected !== undefined),
+      )?.id;
+      const effort =
+        explicitEffort ??
+        (runs.efforts.some((item) => item.id === runs.effort)
           ? runs.effort
-          : undefined;
-      resolved[choice.pubkey] = {
-        model: runs.id,
-        ...(effort ? { effort } : {}),
-      };
+          : undefined);
+      if (choice.sendDefaults && !explicitOnly) {
+        resolved[choice.pubkey] = {
+          model: runs.id,
+          ...(effort ? { effort } : {}),
+        };
+      } else if (resettable && (selected || explicitEffort)) {
+        resolved[choice.pubkey] = {
+          ...(selected ? { model: selected.id } : {}),
+          ...(explicitEffort ? { effort: explicitEffort } : {}),
+        };
+      }
     }
     onResolved(resolved);
-    return () => onResolved({});
-  }, [choices, value, onResolved]);
-  if (!choices.length) return null;
+    return () => onResolved(undefined);
+  }, [
+    choices,
+    value,
+    onResolved,
+    resettable,
+    explicitOnly,
+    unresolvedInventory,
+    inventoryFailed,
+  ]);
+  const canReset =
+    resettable &&
+    pubkeys.some((pubkey) => value[pubkey]?.model || value[pubkey]?.effort);
+  if (!choices.length && !inventoryFailed && !canReset) return null;
   const picked = choices.flatMap((choice) => {
+    if (choice.loading) return [];
     const { model, effort } = value[choice.pubkey] ?? {};
     const runs = runModel(choice, model);
+    const selected = choice.models.some((item) => item.id === model);
+    const savedEffortApplies = !resettable || !model || selected;
+    const supportedEffort = savedEffortApplies
+      ? runs.efforts.find((item) => item.id === effort)
+      : undefined;
     const text = [
-      model !== undefined && runs.label,
-      runs.efforts.find((item) => item.id === effort)?.label,
+      selected && runs.label,
+      effort !== undefined && supportedEffort?.label,
     ]
       .filter(Boolean)
       .join(" · ");
@@ -177,8 +264,11 @@ export function ComposerModels({
     );
   };
   const label = choices.some((choice) => choice.session)
-    ? "Model, effort, and session controls"
-    : "Model and effort for the next run";
+    ? `Model, effort, and session controls${resettable ? " for this chat" : ""}`
+    : resettable
+      ? "Model and effort for this chat"
+      : "Model and effort for the next run";
+  const target = resettable ? "this chat" : "next run";
   return (
     <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
       <Popover.Trigger
@@ -192,7 +282,9 @@ export function ComposerModels({
             data-selected={picked.length ? "" : undefined}
             aria-label={label}
             title={
-              picked.length ? `${label}. Next run: ${picked.join(", ")}` : label
+              picked.length
+                ? `${label}. ${target}: ${picked.join(", ")}`
+                : label
             }
             icon={<GaugeIcon size={18} aria-hidden="true" />}
           />
@@ -213,6 +305,52 @@ export function ComposerModels({
             aria-label={label}
             initialFocus={thumb}
           >
+            {inventoryFailed && (
+              <div className={`${styles.agent} floating-surface`}>
+                <PanelHeader
+                  variant="card"
+                  title={<PanelHeaderLabel title="Model and effort" />}
+                />
+                <div className={styles.controls}>
+                  <div className={styles.status}>
+                    <span className={styles.statusCopy} role="alert">
+                      Agents could not be loaded.
+                    </span>
+                    {onRetryInventory && (
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          onRetryInventory();
+                          setOpen(false);
+                        }}
+                      >
+                        Retry agents
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {canReset && (
+              <Button
+                variant="subtle"
+                size="sm"
+                onClick={() => {
+                  const addressed = new Set(pubkeys);
+                  onChange(
+                    Object.fromEntries(
+                      Object.entries(value).filter(
+                        ([pubkey]) => !addressed.has(pubkey),
+                      ),
+                    ),
+                    [...addressed],
+                  );
+                  setOpen(false);
+                }}
+              >
+                Reset model and effort
+              </Button>
+            )}
             {choices.map((choice, index) => (
               <AgentChoice
                 key={choice.pubkey}
@@ -224,6 +362,8 @@ export function ComposerModels({
                 place={place}
                 value={value[choice.pubkey] ?? {}}
                 disabled={disabled}
+                chatScoped={resettable}
+                retry={() => setRetry((attempt) => attempt + 1)}
                 pick={(next) => pick(choice.pubkey, next)}
                 {...(index === 0 ? { thumb } : {})}
               />
@@ -247,6 +387,8 @@ function AgentChoice({
   place,
   value,
   disabled,
+  chatScoped,
+  retry,
   pick,
   thumb,
 }: {
@@ -255,6 +397,8 @@ function AgentChoice({
   place: SessionPlace;
   value: RunPick;
   disabled: boolean;
+  chatScoped: boolean;
+  retry(): void;
   pick(next: RunPick): void;
   thumb?: Ref<HTMLInputElement>;
 }) {
@@ -287,16 +431,23 @@ function AgentChoice({
       </div>
     );
   const runs = runModel(choice, value.model);
+  const selectedModel = choice.models.some((item) => item.id === value.model)
+    ? value.model
+    : undefined;
+  const selectedEffort =
+    !chatScoped || !value.model || selectedModel !== undefined
+      ? runs.efforts.find((item) => item.id === value.effort)?.id
+      : undefined;
   const several = choice.models.length > 1;
-  // Picking the agent's own model is no pick; an effort the new model lacks
-  // falls back to its default.
+  // Chat choices stay explicit even when they match the provider default.
+  // An effort the new model lacks falls back to its default.
   const chooseModel = (id: string) => {
     const next = choice.models.find((item) => item.id === id);
     const effort = next?.efforts.some((item) => item.id === value.effort)
       ? value.effort
       : undefined;
     pick({
-      ...(id !== choice.current ? { model: id } : {}),
+      ...(chatScoped || id !== choice.current ? { model: id } : {}),
       ...(effort ? { effort } : {}),
     });
   };
@@ -306,7 +457,11 @@ function AgentChoice({
         <MenuRoot>
           <MenuTrigger
             disabled={disabled}
-            aria-label={`Model for ${choice.name}'s next run`}
+            aria-label={
+              chatScoped
+                ? `Model for ${choice.name} in this chat`
+                : `Model for ${choice.name}'s next run`
+            }
             render={
               <Button variant="subtle" size="sm">
                 <span className={styles.about}>{runs.label}</span>
@@ -353,18 +508,28 @@ function AgentChoice({
         }
       />
       <div className={styles.controls}>
-        {runs.efforts.length > 0 ? (
+        {choice.failed ? (
+          <div className={styles.status}>
+            <span className={styles.statusCopy} role="alert">
+              Model and effort could not be loaded.
+            </span>
+            <Button size="sm" disabled={disabled} onClick={retry}>
+              Retry
+            </Button>
+          </div>
+        ) : runs.efforts.length > 0 ? (
           <EffortSlider
             name={choice.name}
+            chatScoped={chatScoped}
             avatarSrc={avatarSrc}
             model={model}
             efforts={runs.efforts}
             resting={runs.effort}
-            value={value.effort}
+            value={selectedEffort}
             disabled={disabled}
             pick={(effort) =>
               pick({
-                ...(value.model ? { model: value.model } : {}),
+                ...(selectedModel ? { model: selectedModel } : {}),
                 ...(effort ? { effort } : {}),
               })
             }

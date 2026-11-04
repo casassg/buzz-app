@@ -117,6 +117,7 @@ export type MentionModelChoice = Models &
     pubkey: string;
     name: string;
     loading?: boolean;
+    failed?: boolean;
     /** Its type offers immediate controls for sessions of this scope. */
     session?: "thread" | "channel";
   }>;
@@ -124,6 +125,7 @@ export type MentionModelChoice = Models &
  * model or effort, or session actions. */
 export function useMentionModels(
   pubkeys: readonly string[],
+  retry = 0,
 ): readonly MentionModelChoice[] {
   const remote = useContext(MentionModelsContext);
   const agents = useContext(AgentsContext);
@@ -144,6 +146,7 @@ export function useMentionModels(
     snapshot: typeof snapshot;
     types: typeof types;
     key: string;
+    retry: number;
     choices: readonly MentionModelChoice[];
   }>();
   useEffect(() => {
@@ -163,15 +166,18 @@ export function useMentionModels(
                 if (!agent || !type) return [];
                 const session = type.sessionControls?.scope(agent);
                 let found: Models = { current: "", models: [] };
+                let failed = false;
                 try {
                   if (type.models) found = await type.models(agent);
                 } catch (error) {
+                  failed = true;
                   console.warn(
                     `Agent type ${type.key} could not list its models`,
                     error,
                   );
                 }
-                return found.models.length > 1 ||
+                return failed ||
+                  found.models.length > 1 ||
                   found.models.some((m) => m.efforts.length) ||
                   session
                   ? [
@@ -179,6 +185,7 @@ export function useMentionModels(
                         pubkey,
                         name: agent.name,
                         ...found,
+                        ...(failed ? { failed } : {}),
                         ...(session ? { session } : {}),
                       },
                     ]
@@ -186,17 +193,19 @@ export function useMentionModels(
               }),
           ).then((choices) => choices.flat())
     ).then((choices) => {
-      if (current) setResolved({ remote, snapshot, types, key, choices });
+      if (current)
+        setResolved({ remote, snapshot, types, key, retry, choices });
     });
     return () => {
       current = false;
     };
-  }, [snapshot, types, key, remote]);
+  }, [snapshot, types, key, remote, retry]);
   // Never offer a previous agent/config's choices while the new lookup settles.
   return resolved?.remote === remote &&
     resolved?.snapshot === snapshot &&
     resolved?.types === types &&
-    resolved?.key === key
+    resolved?.key === key &&
+    resolved?.retry === retry
     ? resolved.choices
     : key.split(":").flatMap((pubkey) => {
         const agent = snapshot?.agents.find((item) => item.pubkey === pubkey);

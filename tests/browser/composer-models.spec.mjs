@@ -46,6 +46,49 @@ test("effort picker opens, follows the keyboard and returns focus", async ({
   await expect(trigger).toBeFocused();
 });
 
+test("Solo first-send choices stay selected until explicit reset", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/tests/fixtures/composer-models.html?solo");
+  const trigger = page.getByRole("button", {
+    name: "Model and effort for this chat",
+  });
+  await expect(trigger).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("solo-model-picker-before-selection.png"),
+  });
+  await trigger.click();
+  await page
+    .getByRole("button", { name: "Model for Honey in this chat" })
+    .click();
+  await page.getByRole("menuitemradio", { name: "Alternate model" }).click();
+  const effort = page.getByRole("slider", {
+    name: "Effort for Honey in this chat",
+  });
+  await expect(effort).toHaveAttribute("aria-valuetext", "Medium");
+  await effort.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(effort).toHaveAttribute("aria-valuetext", "High");
+  await page.keyboard.press("Escape");
+  await expect(trigger).toHaveAttribute("data-selected", "");
+
+  await trigger.click();
+  const popup = page.getByRole("dialog");
+  await expect(
+    popup.getByRole("button", { name: "Model for Honey in this chat" }),
+  ).toContainText("Alternate model");
+  await expect(effort).toHaveAttribute("aria-valuetext", "High");
+  await expect(
+    popup.getByRole("button", { name: "Reset model and effort" }),
+  ).toBeVisible();
+  await popup.screenshot({ path: testInfo.outputPath("solo-first-send.png") });
+
+  await popup.getByRole("button", { name: "Reset model and effort" }).click();
+  await expect(trigger).not.toHaveAttribute("data-selected");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 // Browser-only: inherited animated progress, real track geometry and label clamping.
 // A DOM emulator cannot catch the fill jumping ahead or the label moving backwards.
 test("entrance keeps the fill and delayed model button attached to the handle", async ({
@@ -216,4 +259,76 @@ test("keyboard-opened picker stays settled when switching to the pointer", async
   );
   expect(after.x).toBeCloseTo(before.x, 0);
   expect(after.opacity).toBe(1);
+});
+
+// Real same-origin storage events and Web Locks span two pages; mounted tests
+// own pending intent, resets, Send and refused-start lifecycle permutations.
+test("Solo model persistence shares storage and lock ownership across pages", async ({
+  page,
+  context,
+}) => {
+  const other = await context.newPage();
+  await Promise.all([
+    page.goto("/tests/fixtures/composer-models.html?solo&persist"),
+    other.goto("/tests/fixtures/composer-models.html?solo&persist"),
+  ]);
+  await page.evaluate(async () => {
+    const { lockSoloModelPicks } = await import(
+      "/src/features/messages/solo-model-picks.ts"
+    );
+    const gate = new Promise((resolve) => {
+      window.releaseModelLock = resolve;
+    });
+    await new Promise((resolve) => {
+      window.modelLock = lockSoloModelPicks("composer-models-fixture", () => {
+        resolve();
+        return gate;
+      });
+    });
+  });
+  const trigger = (page) =>
+    page.getByRole("button", { name: "Model and effort for this chat" });
+  try {
+    for (const [target, name] of [
+      [page, "Honey"],
+      [other, "Bumble"],
+    ]) {
+      await trigger(target).click();
+      await target
+        .getByRole("button", { name: `Model for ${name} in this chat` })
+        .click();
+      await target
+        .getByRole("menuitemradio", { name: "Alternate model" })
+        .click();
+      await expect(trigger(target)).toHaveAttribute("data-selected", "");
+    }
+    // Both UI actions completed, but the real lock is still held elsewhere.
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem(
+          `buzz-view.v1:${JSON.stringify(["composer-models-fixture", "solo:model-picks:fixture"])}`,
+        ),
+      ),
+    ).toBeNull();
+  } finally {
+    await page.evaluate(async () => {
+      window.releaseModelLock();
+      await window.modelLock;
+    });
+  }
+  // Each page must observe its peer's edit through the browser storage event.
+  await expect(
+    page.getByRole("button", { name: "Model for Bumble in this chat" }),
+  ).toContainText("Alternate model");
+  await expect(
+    other.getByRole("button", { name: "Model for Honey in this chat" }),
+  ).toContainText("Alternate model");
+  await page.reload();
+  await trigger(page).click();
+  await expect(
+    page.getByRole("button", { name: "Model for Honey in this chat" }),
+  ).toContainText("Alternate model");
+  await expect(
+    page.getByRole("button", { name: "Model for Bumble in this chat" }),
+  ).toContainText("Alternate model");
 });

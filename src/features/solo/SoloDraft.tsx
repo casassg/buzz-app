@@ -8,6 +8,7 @@ import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { GearIcon } from "../../shared/design-system/icons";
 import {
   defaultsRevision,
@@ -22,8 +23,16 @@ import {
   writeView,
   subscribeView,
   viewRevision,
+  replaceView,
 } from "../../shared/view-state";
 import { MessageComposer } from "../messages/MessageComposer";
+import {
+  parseSoloModelPicks,
+  soloModelPicksKey,
+  lockSoloModelPicks,
+} from "../messages/solo-model-picks";
+import type { DraftPicks } from "../messages/ComposerModels";
+import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
@@ -92,11 +101,35 @@ function dropOtherAgentTag(scope: string, key: string, agent?: string) {
  * tags at most, no files, and its settings and workspace untouched. */
 function blankNewChat(session: RelaySession, scope: string, key: string) {
   const saved = mentionDraft(readView<unknown>(scope, `${key}:new-draft`, ""));
+  const choices = viewRevision(scope, soloModelPicksKey(`${key}:new-draft`));
   return (
+    choices !== undefined &&
     (!composerMarkdown(saved).trim() || addressingOnly(saved)) &&
     !attachmentDraftCount(session, `${scope}:${key}:new-draft`) &&
+    !Object.keys(parseSoloModelPicks(choices)).length &&
     readView(scope, `${key}:settings`, null) === null &&
     readView(scope, `${key}:new-project`, null) === null
+  );
+}
+
+/** Keep only explicit draft selections validated for a first-send recipient. */
+function firstChatPicks(
+  draftPicks: DraftPicks | undefined,
+  validated: MentionPicks,
+  recipients: readonly string[],
+): DraftPicks {
+  return Object.fromEntries(
+    Object.entries(draftPicks ?? {}).flatMap(([pubkey, saved]) => {
+      const sent = validated[pubkey];
+      if (!sent || !recipients.includes(pubkey)) return [];
+      const { model, effort, type } = saved;
+      const pick = {
+        ...(model && model === sent.model ? { model } : {}),
+        ...(effort && effort === sent.effort ? { effort } : {}),
+        ...(type ? { type } : {}),
+      };
+      return pick.model || pick.effort ? [[pubkey, pick] as const] : [];
+    }),
   );
 }
 /** Open New chats. Asked whether they hold work of the person's that view
@@ -138,7 +171,9 @@ export function SoloDraft({
    * what was sent in it went back to New chat. It does unless a draft was
    * begun there since (an earlier refused prompt included) or it can't be
    * saved on this device; its settings may be saved only in part. */
-  onFailed?: ((id: string, message: string) => void) | undefined;
+  onFailed?:
+    | ((id: string, message: string, retry?: () => Promise<void>) => void)
+    | undefined;
   projectId?: string | undefined;
 }) {
   const draftKey = linkedId
@@ -146,6 +181,7 @@ export function SoloDraft({
     : projectId
       ? `solo:project:${projectId}`
       : "solo";
+  const notify = useToastNotification();
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
   useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
@@ -202,7 +238,7 @@ export function SoloDraft({
   }, [focusRequest]);
   // The remount replaces the editor; one that had the caret keeps it.
   const [restored, setRestored] = useState({ count: 0, focus: false });
-  // Whether the composer holds text it couldn't save.
+  // Whether the composer holds text or model choices it has not saved.
   const unsaved = useRef(false);
   useEffect(() => {
     const chat = {
@@ -248,6 +284,9 @@ export function SoloDraft({
     draft: MentionDraft,
     files: AttachmentDraft,
     addressed?: readonly MentionRecipient[],
+    picks?: MentionPicks,
+    draftPicks?: DraftPicks,
+    draftPicksRevision?: string | null,
   ) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
@@ -271,6 +310,9 @@ export function SoloDraft({
     const { ttlSeconds } = draftSettings;
     const project = selectedProject;
     const canvas = draftCanvas;
+    const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
+    const chatModelPicksKey = soloModelPicksKey(channelId);
+    const startingDraftPicks = draftPicks ?? {};
     try {
       if (typeof name !== "string")
         throw new Error("The chat name could not be verified.");
@@ -351,13 +393,36 @@ export function SoloDraft({
             }
           : undefined,
       );
+      // Observe admission immediately, even while local persistence awaits ownership.
+      void ready.catch(() => {});
+      const firstPicks: MentionPicks = Object.fromEntries(
+        Object.entries(picks ?? {}).filter(([pubkey]) =>
+          recipients.includes(pubkey),
+        ),
+      );
+      const retainedPicks = firstChatPicks(
+        startingDraftPicks,
+        firstPicks,
+        recipients,
+      );
       try {
-        session.messages.send(
-          channelId,
-          text,
-          recipients,
-          ...(uploaded.length ? [uploaded] : []),
-        );
+        if (Object.keys(firstPicks).length)
+          session.messages.send(
+            channelId,
+            text,
+            recipients,
+            uploaded,
+            undefined,
+            [],
+            firstPicks,
+          );
+        else
+          session.messages.send(
+            channelId,
+            text,
+            recipients,
+            ...(uploaded.length ? [uploaded] : []),
+          );
         files.clear();
         writeView(
           scope,
@@ -383,71 +448,134 @@ export function SoloDraft({
       writeView(scope, `${draftKey}:new-draft`, source ? null : "");
       writeView(scope, `${draftKey}:new-draft:agents`, null);
       writeView(scope, `${draftKey}:new-project`, null);
+      let savedChatPicks = !Object.keys(retainedPicks).length;
+      let clearedPicks: "saved" | "changed" | "failed" = "failed";
+      try {
+        await lockSoloModelPicks(scope, () => {
+          if (!savedChatPicks) {
+            const revision = viewRevision(scope, chatModelPicksKey);
+            savedChatPicks =
+              revision !== undefined &&
+              writeView(scope, chatModelPicksKey, {
+                ...retainedPicks,
+                ...parseSoloModelPicks(revision),
+              });
+          }
+          // Unsaved choices may differ from this baseline; unseen shared edits do not.
+          clearedPicks = replaceView(
+            scope,
+            draftModelPicksKey,
+            draftPicksRevision,
+            null,
+          );
+        });
+      } catch {
+        // Delivery retains its frozen choices; neither shared map is changed unlocked.
+      }
       onStarted(channelId);
+      if (clearedPicks === "failed")
+        notify(
+          "Could not clear model and effort from New chat. Reset them before starting another chat.",
+          "error",
+        );
+      if (!savedChatPicks)
+        notify(
+          "Could not save model and effort for this chat. Choose them again before your next message.",
+          "error",
+        );
       // Only a start that made no chat ends here; the chat and its messages
       // are dropped (see channelWrites.start), and what was sent returns to a
       // New chat still blank. Any other miss leaves the chat listed, with its
       // messages' own Retry.
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
-        writeView(scope, `draft:${channelId}`, null);
-        clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
-        const open = [...openNewChats].filter(
-          (chat) => chat.scope === scope && chat.key === draftKey,
-        );
-        const blank =
-          blankNewChat(session, scope, draftKey) &&
-          !open.some((chat) => chat.editing());
-        // The text first: when it can't be saved, an open New chat may hold
-        // unsaved text of its own, so nothing else is given back.
-        const returned =
-          blank && writeView(scope, `${draftKey}:new-draft`, draft);
-        // What else could not be saved: the toast says so, since a retry
-        // would otherwise silently use the defaults instead.
-        const missing: string[] = [];
-        const returnedTo = `${scope}\n${draftKey}`;
-        if (returned) {
-          restoredPrompts.set(returnedTo, JSON.stringify(draft));
-          if (source && !writeView(scope, draftKey, source))
-            missing.push("link");
-          if (!writeView(scope, `${draftKey}:settings`, draftSettings))
-            missing.push("settings");
-          if (!writeView(scope, `${draftKey}:new-project`, project))
-            missing.push("workspace");
-          // The pill's agents, when it routed the send; the composer reads
-          // them as it mounts. Tags in the text carry their own.
-          if (
-            addressed &&
-            !draft.recipients.length &&
-            !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
-          )
-            missing.push("agents");
-          attachmentDraft(
-            session,
-            `${scope}:${draftKey}:new-draft`,
-            channelId,
-            true,
-          ).adopt(attached);
-          for (const chat of open) chat.restored();
-        }
-        const why = /[.!?]$/.test(reason.message)
-          ? reason.message
-          : `${reason.message}.`;
-        const earlier = restoredPrompts.get(returnedTo);
-        const outcome = returned
-          ? missing.length
-            ? `Your message is back in New chat, but its ${new Intl.ListFormat(
-                undefined,
-                { type: "conjunction" },
-              ).format(missing)} could not be saved on this device.`
-            : "Your message is back in New chat."
-          : blank
-            ? "Your message could not be saved on this device."
-            : earlier !== undefined &&
-                viewRevision(scope, `${draftKey}:new-draft`) === earlier
-              ? "New chat holds an earlier message that couldn't be sent, so this one was not restored."
-              : "New chat has a newer draft, so your message was not restored.";
-        onFailed?.(channelId, `Couldn't start "${name}": ${why} ${outcome}`);
+        let restoring = false;
+        let restored = false;
+        const restore = async () => {
+          if (restoring || restored) return;
+          restoring = true;
+          try {
+            await lockSoloModelPicks(scope, () => {
+              writeView(scope, chatModelPicksKey, null);
+              writeView(scope, `draft:${channelId}`, null);
+              clearAttachmentDraft(session, `${scope}:draft:${channelId}`);
+              const open = [...openNewChats].filter(
+                (chat) => chat.scope === scope && chat.key === draftKey,
+              );
+              const blank =
+                blankNewChat(session, scope, draftKey) &&
+                !open.some((chat) => chat.editing());
+              // The text first: when it can't be saved, an open New chat may hold
+              // unsaved text of its own, so nothing else is given back.
+              const returned =
+                blank && writeView(scope, `${draftKey}:new-draft`, draft);
+              // What else could not be saved: the toast says so, since a retry
+              // would otherwise silently use the defaults instead.
+              const missing: string[] = [];
+              const returnedTo = `${scope}\n${draftKey}`;
+              if (returned) {
+                restoredPrompts.set(returnedTo, JSON.stringify(draft));
+                if (source && !writeView(scope, draftKey, source))
+                  missing.push("link");
+                if (!writeView(scope, `${draftKey}:settings`, draftSettings))
+                  missing.push("settings");
+                if (!writeView(scope, `${draftKey}:new-project`, project))
+                  missing.push("workspace");
+                if (
+                  Object.keys(startingDraftPicks).length &&
+                  !writeView(scope, draftModelPicksKey, startingDraftPicks)
+                )
+                  missing.push("model and effort");
+                // The pill's agents, when it routed the send; the composer reads
+                // them as it mounts. Tags in the text carry their own.
+                if (
+                  addressed &&
+                  !draft.recipients.length &&
+                  !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
+                )
+                  missing.push("agents");
+                attachmentDraft(
+                  session,
+                  `${scope}:${draftKey}:new-draft`,
+                  channelId,
+                  true,
+                ).adopt(attached);
+                for (const chat of open) chat.restored();
+              }
+              const why = /[.!?]$/.test(reason.message)
+                ? reason.message
+                : `${reason.message}.`;
+              const earlier = restoredPrompts.get(returnedTo);
+              const outcome = returned
+                ? missing.length
+                  ? `Your message is back in New chat, but its ${new Intl.ListFormat(
+                      undefined,
+                      { type: "conjunction" },
+                    ).format(missing)} could not be saved on this device.`
+                  : "Your message is back in New chat."
+                : blank
+                  ? "Your message could not be saved on this device."
+                  : earlier !== undefined &&
+                      viewRevision(scope, `${draftKey}:new-draft`) === earlier
+                    ? "New chat holds an earlier message that couldn't be sent, so this one was not restored."
+                    : "New chat has a newer draft, so your message was not restored.";
+              restored = true;
+              onFailed?.(
+                channelId,
+                `Couldn't start "${name}": ${why} ${outcome}`,
+              );
+            });
+          } catch {
+            onFailed?.(
+              channelId,
+              `Couldn't start "${name}": ${reason.message}. Window ownership is unavailable. Retry to restore your message when it is available.`,
+              restore,
+            );
+          } finally {
+            restoring = false;
+          }
+        };
+        void restore();
       });
     } catch (reason) {
       if (mounted.current)
@@ -496,6 +624,7 @@ export function SoloDraft({
         }
         submission={{
           draftKey: `${draftKey}:new-draft`,
+          modelPicksKey: soloModelPicksKey(`${draftKey}:new-draft`),
           // The space ends the link, so typing after it writes prose.
           initialDraft: source && `${source.link} `,
           locked: busy,
@@ -504,8 +633,8 @@ export function SoloDraft({
           unsaved: (held) => {
             unsaved.current = held;
           },
-          submit: (draft, files, addressed) => {
-            void start(draft, files, addressed);
+          submit: (draft, files, addressed, picks, draftPicks, revision) => {
+            void start(draft, files, addressed, picks, draftPicks, revision);
           },
         }}
       />

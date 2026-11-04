@@ -2052,8 +2052,18 @@ function ChannelWorkspace({
                     signal: navigation?.signal,
                   }));
               }}
-              onFailed={(channelId, message) => {
-                notify(message, "error");
+              onFailed={(channelId, message, retry) => {
+                notify(
+                  message,
+                  "error",
+                  retry
+                    ? {
+                        label: "Retry restoring message",
+                        onClick: () => void retry(),
+                        timeout: Infinity,
+                      }
+                    : undefined,
+                );
                 // A failure behind Settings must not navigate away from it.
                 if (
                   showing.current === channelId &&

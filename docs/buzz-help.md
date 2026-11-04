@@ -114,9 +114,21 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 - **Solo** organizes your chats with agents. Choose **New chat**, select or tag
   an agent, and send a message. Solo conversations continue at the chat's top
-  level rather than requiring a new thread for each reply. Solo chats can also
-  be shared with other people; do not describe every Solo chat as visible only
-  to its creator.
+  level rather than requiring a new thread for each reply. Where available, use
+  **Model and effort** in the composer before sending; Solo keeps those choices
+  for that chat until you reset them in the same control, even if its available
+  models change. If saved choices cannot be read from this device, use **Retry
+  saved choices** before sending. If their agent catalog cannot be loaded, retry
+  or reset them in the model control. If New chat cannot clear
+  its choices after sending, reset them before starting another chat. Wait for
+  pending model changes to save before sending. If saving fails, the current
+  composer keeps your unsaved selection; other windows may not see it.
+  If a refused start offers **Retry restoring message**, it keeps the original
+  message, attachments, and choices while this window stays open. Retry never
+  replaces a newer New chat draft. Reloading or dismissing that notice ends this
+  recovery option.
+  Solo chats can also be shared with other people; do not describe every Solo
+  chat as visible only to its creator.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
