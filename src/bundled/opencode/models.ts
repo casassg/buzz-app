@@ -1,5 +1,5 @@
-// The models and thinking levels `opencode acp` offers, read from a short-lived
-// session in the home folder. Nothing is cached after a failure.
+// The models, thinking levels and agents `opencode acp` offers, read from a
+// short-lived session in the home folder. Nothing is cached after a failure.
 import { REQUEST_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import type { Models } from "../../features/agents/service";
 import { OpenCodeProcess, type OpenCodeHost } from "./opencode";
@@ -35,11 +35,40 @@ export function picks(configOptions: readonly Option[], current = ""): Models {
   };
 }
 
+/** The opencode agents a session can switch to, from the `mode` option. */
+export type Modes = Readonly<{
+  /** opencode's `default_agent`; empty when it lists none. */
+  current: string;
+  modes: readonly Readonly<{ id: string; label: string }>[];
+}>;
+
+/** `mode` picks from a `session/new` answer. */
+export function modes(configOptions: readonly Option[]): Modes {
+  const mode = configOptions.find(
+    (item) => item.id === "mode" || item.category === "mode",
+  );
+  return {
+    current: mode?.currentValue ?? "",
+    modes: (mode?.options ?? []).map(({ value, name }) => ({
+      id: value,
+      label: name || value,
+    })),
+  };
+}
+
 export class OpenCodeModels {
-  private reading: Promise<Models> | undefined;
+  private reading: Promise<readonly Option[]> | undefined;
   constructor(private readonly host: OpenCodeHost) {}
 
   read(): Promise<Models> {
+    return this.options().then((options) => picks(options));
+  }
+
+  modes(): Promise<Modes> {
+    return this.options().then((options) => modes(options));
+  }
+
+  private options(): Promise<readonly Option[]> {
     if (this.reading) return this.reading;
     const reading = (async () => {
       const opencode = await OpenCodeProcess.start(this.host.spawn, {
@@ -51,7 +80,7 @@ export class OpenCodeModels {
           { cwd: await this.host.resolveDirectory("~"), mcpServers: [] },
           REQUEST_TIMEOUT_MS,
         )) as { configOptions?: Option[] };
-        return picks(opened.configOptions ?? []);
+        return opened.configOptions ?? [];
       } finally {
         void opencode.kill();
       }

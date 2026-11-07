@@ -64,6 +64,7 @@ import {
 } from "./opencode";
 import { AgentSessions as AcpAgentSessions } from "../../features/agent-harness/acp/agent-sessions";
 import type { AcpProcess } from "../../features/agent-harness/acp/process";
+import { validWorkspace } from "../codex/config";
 import { localSessions } from "../goose/sessions";
 
 class AgentSessions extends AcpAgentSessions {
@@ -104,6 +105,9 @@ class SharedProcess {
 }
 
 export type Config = Readonly<{
+  /** An opencode agent (its ACP `mode`), such as `build`; empty uses
+   * opencode's `default_agent`. */
+  mode: string;
   /** A model opencode offers; empty uses opencode's own. */
   model: string;
   /** A thinking level opencode offers for the model; empty uses opencode's. */
@@ -115,16 +119,26 @@ export type Config = Readonly<{
   scope: Scope;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
+  mode: "",
   model: "",
   effort: "",
   instructions: "",
   workspace: "~/.buzz",
   scope: "thread",
 });
-export const config = (value: unknown): Config => ({
-  ...DEFAULT_CONFIG,
-  ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
-});
+export const config = (value: unknown): Config => {
+  const merged: Config = {
+    ...DEFAULT_CONFIG,
+    ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  };
+  // New agent can't refuse a typed path, so a blank or relative one runs in
+  // the default workspace rather than wherever opencode was started.
+  const workspace =
+    typeof merged.workspace === "string" ? merged.workspace.trim() : "";
+  return validWorkspace(workspace)
+    ? { ...merged, workspace }
+    : { ...merged, workspace: DEFAULT_CONFIG.workspace };
+};
 
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
@@ -786,6 +800,7 @@ export class OpenCodeRuntime {
         provider: "",
         model: entry.config.model.trim(),
         effort: entry.config.effort,
+        mode: entry.config.mode,
       }),
       fingerprint: () =>
         JSON.stringify([
