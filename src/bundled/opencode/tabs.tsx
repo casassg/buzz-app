@@ -115,9 +115,12 @@ export function createTabs({
     );
   }
 
-  /** The opencode agent and instructions a new agent starts with. */
+  /** The opencode agent, workspace and instructions a new agent starts with. */
   function Create({ config, onChange, disabled }: AgentCreateProps<Config>) {
-    const current = readConfig(config);
+    // Unnormalized, so the workspace can be cleared and retyped; the runtime
+    // falls back to the default for a blank or relative path.
+    const current: Config = { ...DEFAULT_CONFIG, ...config };
+    const workspace = current.workspace.trim();
     return (
       <>
         <ModeField
@@ -125,6 +128,21 @@ export function createTabs({
           disabled={disabled}
           onChange={(mode) => onChange({ ...current, mode })}
         />
+        <Field
+          label="Workspace"
+          description="The folder opencode works in. Use ~/ for your home folder."
+          {...(workspace && !validWorkspace(workspace)
+            ? { error: "Enter an absolute or ~/… workspace path." }
+            : {})}
+        >
+          <Input
+            value={current.workspace}
+            disabled={disabled}
+            onValueChange={(value) =>
+              onChange({ ...current, workspace: value })
+            }
+          />
+        </Field>
         <AgentInstructions
           creation
           value={current.instructions}

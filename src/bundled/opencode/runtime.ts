@@ -64,6 +64,7 @@ import {
 } from "./opencode";
 import { AgentSessions as AcpAgentSessions } from "../../features/agent-harness/acp/agent-sessions";
 import type { AcpProcess } from "../../features/agent-harness/acp/process";
+import { validWorkspace } from "../codex/config";
 import { localSessions } from "../goose/sessions";
 
 class AgentSessions extends AcpAgentSessions {
@@ -125,10 +126,19 @@ export const DEFAULT_CONFIG: Config = Object.freeze({
   workspace: "~/.buzz",
   scope: "thread",
 });
-export const config = (value: unknown): Config => ({
-  ...DEFAULT_CONFIG,
-  ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
-});
+export const config = (value: unknown): Config => {
+  const merged: Config = {
+    ...DEFAULT_CONFIG,
+    ...(value && typeof value === "object" ? (value as Partial<Config>) : {}),
+  };
+  // New agent can't refuse a typed path, so a blank or relative one runs in
+  // the default workspace rather than wherever opencode was started.
+  const workspace =
+    typeof merged.workspace === "string" ? merged.workspace.trim() : "";
+  return validWorkspace(workspace)
+    ? { ...merged, workspace }
+    : { ...merged, workspace: DEFAULT_CONFIG.workspace };
+};
 
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
