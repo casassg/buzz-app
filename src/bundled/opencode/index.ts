@@ -12,7 +12,12 @@ import {
   DEFAULT_CONFIG,
   OpenCodeRuntime,
 } from "./runtime";
-import { syncedSettingsSchema, withSyncedSettings } from "./settings";
+import {
+  adopt,
+  carry,
+  syncedSettingsSchema,
+  withSyncedSettings,
+} from "./settings";
 
 export const TYPE_ID = "opencode";
 const HANDOVER_MS = 2 * 60_000;
@@ -58,6 +63,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "OpenCode on this computer, with any provider it supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    adopt,
+    carry,
     summary: (agent) => config(agent.config).model || "OpenCode",
     sessions: {
       list: (key) =>

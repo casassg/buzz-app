@@ -6,7 +6,8 @@ import {
   type SettingsSchema,
   withSynced,
 } from "../../features/agents/agent-config";
-import { type Config, DEFAULT_CONFIG } from "./runtime";
+import type { Carry } from "../../features/agents/native";
+import { type Config, config, DEFAULT_CONFIG } from "./runtime";
 
 export const syncedSettingsSchema = {
   model: "string",
@@ -23,3 +24,20 @@ export const withSyncedSettings = (
   config: Config,
   settings: Readonly<Record<string, string>>,
 ): Config => withSynced(syncedSettingsSchema, DEFAULT_CONFIG, config, settings);
+
+/** What another harness may take over when the agent changes type: its
+ * instructions and a workspace other than the default. */
+export const carry = (saved: unknown): Carry => {
+  const { instructions, workspace } = config(saved);
+  return {
+    ...(instructions.trim() && { instructions }),
+    ...(workspace !== DEFAULT_CONFIG.workspace && { workspace }),
+  };
+};
+
+/** A brought-over agent keeps the instructions and workspace it carries. */
+export const adopt = (brought: Carry, saved: Config): Config => ({
+  ...saved,
+  instructions: brought.instructions ?? saved.instructions,
+  workspace: brought.workspace ?? saved.workspace,
+});
