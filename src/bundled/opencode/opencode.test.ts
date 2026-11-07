@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import type { HostProcessOptions } from "../../features/host/service";
 import { bundledPlugins } from "..";
-import { OpenCodeModels, picks } from "./models";
+import { modes, OpenCodeModels, picks } from "./models";
 import { ENV, OPENCODE, OpenCodeProcess } from "./opencode";
 import { config, DEFAULT_CONFIG } from "./runtime";
 
@@ -24,7 +24,15 @@ const CONFIG_OPTIONS = [
       { value: "medium", name: "Medium" },
     ],
   },
-  { id: "mode", category: "mode", currentValue: "build", options: [] },
+  {
+    id: "mode",
+    category: "mode",
+    currentValue: "build",
+    options: [
+      { value: "build", name: "Build" },
+      { value: "plan", name: "Plan" },
+    ],
+  },
 ];
 
 /** A stand-in for `opencode acp` over stdio. */
@@ -145,6 +153,51 @@ it("puts a session on the picked model and level, and skips what is already set"
   expect(session.chosen).toMatchObject({
     model: "anthropic/sonnet",
     effort: "low",
+  });
+});
+
+it("switches the opencode agent first, then puts the chosen model back", async () => {
+  const opencode = fake();
+  const process = await OpenCodeProcess.start(opencode.spawn, { cwd: "/w" });
+  const session = {
+    id: "s1",
+    chosen: { provider: "", model: "openai/gpt", effort: "" },
+    offer: () => undefined,
+  };
+  const configured = () =>
+    opencode.received
+      .filter(({ method }) => method === "session/set_config_option")
+      .map(({ params }) => `${params.configId}=${params.value}`);
+
+  await OPENCODE.select?.(process, session, {
+    provider: "",
+    model: "openai/gpt",
+    mode: "plan",
+  });
+  expect(configured()).toEqual(["mode=plan", "model=openai/gpt"]);
+  expect(session.chosen).toMatchObject({ mode: "plan", model: "openai/gpt" });
+
+  await OPENCODE.select?.(process, session, {
+    provider: "",
+    model: "openai/gpt",
+    mode: "plan",
+  });
+  expect(configured()).toHaveLength(2);
+});
+
+it("lists the agents opencode offers", async () => {
+  expect(modes([])).toEqual({ current: "", modes: [] });
+  const opencode = fake();
+  const listed = await new OpenCodeModels({
+    spawn: opencode.spawn,
+    resolveDirectory: async (path) => path,
+  }).modes();
+  expect(listed).toEqual({
+    current: "build",
+    modes: [
+      { id: "build", label: "Build" },
+      { id: "plan", label: "Plan" },
+    ],
   });
 });
 

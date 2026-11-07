@@ -104,6 +104,9 @@ class SharedProcess {
 }
 
 export type Config = Readonly<{
+  /** An opencode agent (its ACP `mode`), such as `build`; empty uses
+   * opencode's `default_agent`. */
+  mode: string;
   /** A model opencode offers; empty uses opencode's own. */
   model: string;
   /** A thinking level opencode offers for the model; empty uses opencode's. */
@@ -115,6 +118,7 @@ export type Config = Readonly<{
   scope: Scope;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
+  mode: "",
   model: "",
   effort: "",
   instructions: "",
@@ -786,6 +790,7 @@ export class OpenCodeRuntime {
         provider: "",
         model: entry.config.model.trim(),
         effort: entry.config.effort,
+        mode: entry.config.mode,
       }),
       fingerprint: () =>
         JSON.stringify([

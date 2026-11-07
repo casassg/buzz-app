@@ -54,11 +54,13 @@ export type ToolServer = (
 ) => Promise<unknown>;
 
 /** The provider, model and thinking level a session's turns run on; empty is
- * what the harness's own config picks. */
+ * what the harness's own config picks. `mode` is the harness's own agent or
+ * mode, for a harness that offers them; empty is its default. */
 export type Choice = Readonly<{
   provider: string;
   model: string;
   effort?: string;
+  mode?: string;
 }>;
 
 /** The HTTP MCP server a session declares in `session/new`. */

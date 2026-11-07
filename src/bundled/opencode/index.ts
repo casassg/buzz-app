@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
   OpenCodeRuntime,
 } from "./runtime";
+import { createTabs } from "./tabs";
 
 export const TYPE_ID = "opencode";
 const HANDOVER_MS = 2 * 60_000;
@@ -51,13 +52,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
+  const { Create, SettingsTab } = createTabs(
+    models ? { modes: () => models.modes() } : {},
+  );
+
   agents.register<Config>({
     id: TYPE_ID,
     title: "OpenCode",
     description:
       "OpenCode on this computer, with any provider it supports. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
-    summary: (agent) => config(agent.config).model || "OpenCode",
+    summary: (agent) => {
+      const { mode, model } = config(agent.config);
+      return [mode, model].filter(Boolean).join(" · ") || "OpenCode";
+    },
+    Create,
+    tabs: [
+      {
+        id: "settings",
+        title: "Settings",
+        role: "settings",
+        component: SettingsTab,
+      },
+    ],
     sessions: {
       list: (key) =>
         runtime.conversations(key).map(({ key, at }) => {

@@ -64,6 +64,16 @@ export const OPENCODE: AcpHooks = {
         );
       }
     };
+    // The agent first: an opencode agent can bring its own model and level,
+    // so a chosen model and level are put back after a switch.
+    if (want.mode && want.mode !== session.chosen.mode) {
+      await configure("mode", want.mode);
+      session.chosen = {
+        provider: session.chosen.provider,
+        model: "",
+        mode: want.mode,
+      };
+    }
     if (want.model && want.model !== session.chosen.model) {
       await configure("model", want.model);
       session.chosen = { ...session.chosen, model: want.model };
