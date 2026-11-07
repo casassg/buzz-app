@@ -12,6 +12,7 @@ import {
   DEFAULT_CONFIG,
   OpenCodeRuntime,
 } from "./runtime";
+import { syncedSettingsSchema, withSyncedSettings } from "./settings";
 
 export const TYPE_ID = "opencode";
 const HANDOVER_MS = 2 * 60_000;
@@ -76,6 +77,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     run: (delivery) => runtime.run(delivery),
     runOnce: (turn) => runtime.runOnce(turn),
     timeoutMs: HANDOVER_MS,
+    syncedSettings: {
+      schema: syncedSettingsSchema,
+      withSynced: withSyncedSettings,
+    },
     resumes: true,
   });
 };

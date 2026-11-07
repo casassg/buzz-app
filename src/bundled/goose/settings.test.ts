@@ -11,6 +11,10 @@ import {
   syncedSettings as codex,
   syncedSettingsSchema as codexSchema,
 } from "../codex/settings";
+import {
+  syncedSettings as opencode,
+  syncedSettingsSchema as opencodeSchema,
+} from "../opencode/settings";
 import { DEFAULT_CONFIG as gooseDefaults } from "./runtime";
 import {
   syncedSettings as goose,
@@ -36,6 +40,11 @@ it("syncs every agent setting except instructions and the device-local folder", 
     effort: "high",
     scope: "thread",
   });
+  expect(opencode(base)).toEqual({
+    model: "m",
+    effort: "high",
+    scope: "thread",
+  });
   expect(goose({ ...gooseDefaults, provider: "p", instructions: "x" })).toEqual(
     {
       model: "",
@@ -47,6 +56,7 @@ it("syncs every agent setting except instructions and the device-local folder", 
   for (const [schema, settings] of [
     [claudeSchema, claude(base)],
     [codexSchema, codex(base)],
+    [opencodeSchema, opencode(base)],
     [gooseSchema, goose(gooseDefaults)],
   ] as const)
     expect(settingsProblem(schema, settings)).toBeUndefined();
@@ -67,6 +77,7 @@ it("rejects a remote workspace setting as an unknown key for every agent type", 
   for (const [agentType, schema] of [
     ["claude-code", claudeSchema],
     ["codex", codexSchema],
+    ["opencode", opencodeSchema],
     ["goose", gooseSchema],
   ] as const) {
     const content = JSON.stringify({
